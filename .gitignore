@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+pose_landmarker_lite.task
