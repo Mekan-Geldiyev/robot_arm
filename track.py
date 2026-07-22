@@ -30,7 +30,7 @@ import serial
 
 # --- Serial ---
 SERIAL_PORT = "COM3"       # <-- change this to match your Arduino's port
-BAUD_RATE = 115200         # must match Serial.begin() in robot_arm.ino
+BAUD_RATE = 9600           # must match Serial.begin() in robot_arm.ino
 
 # --- Camera ---
 CAMERA_INDEX = 0
@@ -82,7 +82,14 @@ INVERT_PAN = False
 # arm-down to partially-raised - raise your arm fully overhead while
 # watching the raw tilt printout and raise TILT_MAX to match if it goes higher.
 TILT_MIN, TILT_MAX = -90, 20          # raw shoulder elevation angle range
-TILT_SERVO_MIN, TILT_SERVO_MAX = 0, 180
+# Capped below 180 on purpose: pushing the tilt servo to its full mechanical
+# extreme makes the bracket/Lego arm jam, the servo stalls trying to push
+# past it, and the current spike browns out the shared power connection -
+# that's what's been causing the freezes during the "shoulder up" motion.
+# Test manually via Serial Monitor first (try tilt=140, 150, 160, 170 with
+# pan held still) to feel out exactly where it jams, then set
+# TILT_SERVO_MAX a bit below that point - 150 below is just a starting guess.
+TILT_SERVO_MIN, TILT_SERVO_MAX = 0, 150
 INVERT_TILT = False
 
 ELBOW_MIN, ELBOW_MAX = 30, 180        # raw elbow flex angle range (for later)

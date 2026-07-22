@@ -28,7 +28,7 @@ Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver();
 #define TILT_CHANNEL  1     // vertical raise - uppercut
 #define ELBOW_CHANNEL 2     // NOT INSTALLED YET - placeholder for later
 
-#define BAUD_RATE     115200
+#define BAUD_RATE     9600
 
 #define STEP_SIZE     2     // degrees per smoothing step (bigger = faster, less smooth)
 #define STEP_DELAY_MS 15    // ms between smoothing steps
