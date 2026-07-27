@@ -144,6 +144,30 @@ to dig through the code:
 3. If the servo moves the opposite direction from your arm, flip the
    matching `INVERT_*` flag.
 
+<a id="calibration-reference-values"></a>
+### 📌 Calibration reference values (measured 2026-07-27)
+
+Ground-truth pose -> servo command pairs, found by moving the physical arm
+by hand into each pose and finding the `pan,tilt` command via Serial
+Monitor that reproduces it. Used to fit `PAN_MIN/MAX` and `TILT_MIN/MAX` in
+`track.py`. **If you recalibrate, redo this table** - the raw numbers only
+mean what they mean for the current pan/tilt angle formulas (shoulder ->
+wrist).
+
+| Pose | Serial Monitor command (pan,tilt) | Live raw reading (pan,tilt) | Reliable? |
+|---|---|---|---|
+| Hand down at side (resting) | `180,0` | `178, -84` | Yes |
+| Hand out to the side (horizontal) | `0,90` | `133, -16` | Yes |
+| Hand out to the front (facing camera) | `90,0` | `160, -9` | **No** - see note below |
+
+> **Why "hand out to the front" is unreliable:** that motion is mostly
+> toward/away from the camera (depth/z-axis), which a single monocular
+> webcam can't resolve nearly as well as side-to-side motion. Its raw
+> numbers don't fit the same line as the other two poses and were
+> deliberately *not* used to fit `PAN_MIN/MAX`/`TILT_MIN/MAX`. If this pose
+> needs to work well, it likely needs its own handling (e.g. leaning more
+> on `z` depth data) rather than just wider MIN/MAX ranges.
+
 ## Status / roadmap
 
 - [x] Hardware wired and tested

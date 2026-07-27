@@ -72,23 +72,28 @@ SEND_ELBOW = False
 # To calibrate: run track.py, watch the "raw:" values while you move
 # through arm-down -> arm-out-horizontal -> arm-raised-overhead (for tilt)
 # and jab -> hook (for pan), and set MIN/MAX to the extremes you actually see.
+#
+# Pan/tilt are now both measured shoulder->WRIST (not shoulder->elbow), so a
+# bent-elbow raise still counts as the arm going up/around instead of only
+# straight-arm motion. This shifts the raw numbers a bit from earlier
+# calibration sessions - redo the raw-value readout below if angles feel off.
 
-PAN_MIN, PAN_MAX = 20, 180            # raw shoulder horizontal angle range
+PAN_MIN, PAN_MAX = 133, 178           # raw shoulder horizontal angle range
 PAN_SERVO_MIN, PAN_SERVO_MAX = 0, 180
 INVERT_PAN = False
+# Fitted from real Serial Monitor ground truth (see README "Calibration
+# Reference Values"): raw=178 <-> servo=180 (hand at side), raw=133 <->
+# servo=0 (hand out to the side). Narrower than it used to be because the
+# pan/tilt formulas now measure shoulder->WRIST instead of shoulder->elbow.
 
-# Tilt formula: ~-90 deg = arm hanging straight down, ~0 deg = arm held
-# horizontal, ~+90 deg = arm raised straight overhead. Defaults below cover
-# arm-down to partially-raised - raise your arm fully overhead while
-# watching the raw tilt printout and raise TILT_MAX to match if it goes higher.
-TILT_MIN, TILT_MAX = -90, 20          # raw shoulder elevation angle range
-# Capped below 180 on purpose: pushing the tilt servo to its full mechanical
-# extreme makes the bracket/Lego arm jam, the servo stalls trying to push
-# past it, and the current spike browns out the shared power connection -
-# that's what's been causing the freezes during the "shoulder up" motion.
-# Test manually via Serial Monitor first (try tilt=140, 150, 160, 170 with
-# pan held still) to feel out exactly where it jams, then set
-# TILT_SERVO_MAX a bit below that point - 150 below is just a starting guess.
+# Tilt formula: more negative = arm hanging down, less negative/positive =
+# arm raised. Fitted the same way: raw=-84 <-> servo=0 (hand down at side),
+# raw=-16 <-> servo=90 (hand out to the side). TILT_MAX extrapolates a bit
+# past that point to leave headroom for raising the arm further (uppercut/
+# overhead) while staying under the mechanical stall limit found earlier -
+# recheck via Serial Monitor (tilt=140/150/160/170, pan held still) if the
+# arm jams before reaching TILT_SERVO_MAX.
+TILT_MIN, TILT_MAX = -84, 30          # raw shoulder elevation angle range
 TILT_SERVO_MIN, TILT_SERVO_MAX = 0, 150
 INVERT_TILT = False
 
@@ -139,10 +144,14 @@ def angle_3pt(a, b, c, keys=("x", "y")):
     return math.degrees(math.acos(cos_angle))
 
 
-def elevation_angle(shoulder, elbow):
-    """Angle of the upper arm above/below horizontal (image x-y plane)."""
-    dx = elbow.x - shoulder.x
-    dy = shoulder.y - elbow.y  # image y grows downward, so flip it
+def elevation_angle(shoulder, wrist):
+    """Angle of the whole arm (shoulder->wrist) above/below horizontal
+    (image x-y plane). Uses the wrist rather than the elbow so a bent-elbow
+    raise (forearm swings up while the upper arm barely moves - e.g. a
+    salute-style motion) still registers as "arm going up", since it's the
+    hand/fist position that boxing motion actually cares about."""
+    dx = wrist.x - shoulder.x
+    dy = shoulder.y - wrist.y  # image y grows downward, so flip it
     return math.degrees(math.atan2(dy, abs(dx) + 1e-6))
 
 
@@ -218,8 +227,8 @@ def main():
             wrist = lm[LEFT_WRIST]
             hip = lm[LEFT_HIP]
 
-            raw_pan = angle_3pt(hip, shoulder, elbow, keys=("x", "z"))
-            raw_tilt = elevation_angle(shoulder, elbow)
+            raw_pan = angle_3pt(hip, shoulder, wrist, keys=("x", "z"))
+            raw_tilt = elevation_angle(shoulder, wrist)
             raw_elbow = angle_3pt(shoulder, elbow, wrist, keys=("x", "y"))
 
             # Low-pass filter the noisy per-frame angles before mapping/sending,
