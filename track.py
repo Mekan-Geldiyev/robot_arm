@@ -36,8 +36,13 @@ BAUD_RATE = 9600           # must match Serial.begin() in robot_arm.ino
 CAMERA_INDEX = 0
 
 # --- Pose model (downloaded automatically on first run) ---
-MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pose_landmarker_lite.task")
-MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task"
+# Using "full" instead of "lite": meaningfully better landmark accuracy/
+# confidence (fewer low-confidence holds, less jitter on tricky poses like
+# a raised arm), at some extra CPU cost per frame - still real-time on a
+# normal PC. Delete the old pose_landmarker_lite.task file if you want to
+# free up the disk space, it's no longer used.
+MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pose_landmarker_full.task")
+MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/latest/pose_landmarker_full.task"
 
 # --- Deadband: don't send a new value unless it changed by at least this much ---
 DEADBAND_DEG = 2
@@ -53,8 +58,16 @@ SMOOTH_ALPHA = 0.25
 # --- Don't flood the serial link faster than this, independent of camera FPS ---
 SEND_INTERVAL_MS = 40   # ~25 updates/sec - plenty for smooth servo motion
 
-# --- Elbow (channel 2) servo is not installed yet ---
-SEND_ELBOW = False
+# --- Elbow (channel 2) servo is installed ---
+SEND_ELBOW = True
+
+# --- Skip frames where MediaPipe isn't confident about a landmark's
+# position (e.g. a hand raised near/above the top of the frame, or an arm
+# briefly occluded) instead of computing angles from a bad guess. Without
+# this, a single bad low-confidence estimate can flip the sign of the tilt
+# calculation for a frame or two - which is what raising your arm straight
+# overhead (wrist near/past the top frame edge) looks like. ---
+VISIBILITY_MIN = 0.5
 
 # --- Calibration -----------------------------------------------------------
 # Raw angles from MediaPipe rarely land cleanly on 0-180. Watch the printed
@@ -93,12 +106,33 @@ INVERT_PAN = False
 # overhead) while staying under the mechanical stall limit found earlier -
 # recheck via Serial Monitor (tilt=140/150/160/170, pan held still) if the
 # arm jams before reaching TILT_SERVO_MAX.
-TILT_MIN, TILT_MAX = -84, 30          # raw shoulder elevation angle range
-TILT_SERVO_MIN, TILT_SERVO_MAX = 0, 150
+TILT_MIN, TILT_MAX = -84, -16         # raw shoulder elevation angle range
+# TEMPORARILY capped at the known-good range (down-at-side -> out-to-side)
+# instead of extrapolating further. Past servo~90-150 the arm was
+# observed reversing direction (wrist-above-shoulder poses made it go
+# DOWN instead of up) - likely the physical linkage passing some
+# mechanical peak, not a simple invert. Needs a Serial Monitor sweep
+# (send tilt=90,100,110,...150 with pan held still, watch for the exact
+# point it turns around/strains) before raising TILT_MAX/TILT_SERVO_MAX
+# again - see README calibration table, TODO row.
+TILT_SERVO_MIN, TILT_SERVO_MAX = 0, 90
 INVERT_TILT = False
 
-ELBOW_MIN, ELBOW_MAX = 30, 180        # raw elbow flex angle range (for later)
-ELBOW_SERVO_MIN, ELBOW_SERVO_MAX = 0, 180
+ELBOW_MIN, ELBOW_MAX = 58, 68         # raw elbow flex angle range
+# Ground truth from Serial Monitor: servo=0 <-> elbow bent to a 90 degree
+# angle (raw=58), servo=90 <-> arm fully straight, e.g. hanging at your
+# side (raw=68). Capped well short of 180 on purpose - unlike pan/tilt this
+# isn't just a mechanical stall risk, 180 would try to bend the elbow joint
+# past straight in reverse (hand facing backwards), which is anatomically
+# impossible and would just fight your actual arm. 90 is the natural full
+# range end (a real elbow doesn't hyperextend), so there's no reason to
+# ever command past it.
+#
+# NOTE: a 10-degree raw span covering the whole 0-90 servo range means
+# ~1 degree of raw jitter = ~9 degrees of servo motion. If the elbow looks
+# twitchy, that narrow span (a real limit of tracking elbow flex from a
+# face-on 2D camera - see README) is almost certainly why, not a bug.
+ELBOW_SERVO_MIN, ELBOW_SERVO_MAX = 0, 90
 INVERT_ELBOW = False
 
 # ============================================================
@@ -227,52 +261,65 @@ def main():
             wrist = lm[LEFT_WRIST]
             hip = lm[LEFT_HIP]
 
-            raw_pan = angle_3pt(hip, shoulder, wrist, keys=("x", "z"))
-            raw_tilt = elevation_angle(shoulder, wrist)
-            raw_elbow = angle_3pt(shoulder, elbow, wrist, keys=("x", "y"))
+            low_confidence = (
+                shoulder.visibility < VISIBILITY_MIN
+                or elbow.visibility < VISIBILITY_MIN
+                or wrist.visibility < VISIBILITY_MIN
+                or hip.visibility < VISIBILITY_MIN
+            )
 
-            # Low-pass filter the noisy per-frame angles before mapping/sending,
-            # so the arm follows your overall motion instead of chasing jitter.
-            if smooth_pan is None:
-                smooth_pan, smooth_tilt, smooth_elbow = raw_pan, raw_tilt, raw_elbow
+            if low_confidence:
+                cv2.putText(
+                    frame, "Low confidence - holding last position", (10, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 165, 255), 2,
+                )
             else:
-                smooth_pan += SMOOTH_ALPHA * (raw_pan - smooth_pan)
-                smooth_tilt += SMOOTH_ALPHA * (raw_tilt - smooth_tilt)
-                smooth_elbow += SMOOTH_ALPHA * (raw_elbow - smooth_elbow)
+                raw_pan = angle_3pt(hip, shoulder, wrist, keys=("x", "z"))
+                raw_tilt = elevation_angle(shoulder, wrist)
+                raw_elbow = angle_3pt(shoulder, elbow, wrist, keys=("x", "y"))
 
-            pan = int(map_range(smooth_pan, PAN_MIN, PAN_MAX, PAN_SERVO_MIN, PAN_SERVO_MAX, INVERT_PAN))
-            tilt = int(map_range(smooth_tilt, TILT_MIN, TILT_MAX, TILT_SERVO_MIN, TILT_SERVO_MAX, INVERT_TILT))
-            elbow_angle = int(map_range(smooth_elbow, ELBOW_MIN, ELBOW_MAX, ELBOW_SERVO_MIN, ELBOW_SERVO_MAX, INVERT_ELBOW))
+                # Low-pass filter the noisy per-frame angles before mapping/sending,
+                # so the arm follows your overall motion instead of chasing jitter.
+                if smooth_pan is None:
+                    smooth_pan, smooth_tilt, smooth_elbow = raw_pan, raw_tilt, raw_elbow
+                else:
+                    smooth_pan += SMOOTH_ALPHA * (raw_pan - smooth_pan)
+                    smooth_tilt += SMOOTH_ALPHA * (raw_tilt - smooth_tilt)
+                    smooth_elbow += SMOOTH_ALPHA * (raw_elbow - smooth_elbow)
 
-            print(
-                f"raw: pan={raw_pan:6.1f} tilt={raw_tilt:6.1f} elbow={raw_elbow:6.1f}  ->  "
-                f"servo: pan={pan:3d} tilt={tilt:3d} elbow={elbow_angle:3d}"
-            )
+                pan = int(map_range(smooth_pan, PAN_MIN, PAN_MAX, PAN_SERVO_MIN, PAN_SERVO_MAX, INVERT_PAN))
+                tilt = int(map_range(smooth_tilt, TILT_MIN, TILT_MAX, TILT_SERVO_MIN, TILT_SERVO_MAX, INVERT_TILT))
+                elbow_angle = int(map_range(smooth_elbow, ELBOW_MIN, ELBOW_MAX, ELBOW_SERVO_MIN, ELBOW_SERVO_MAX, INVERT_ELBOW))
 
-            pan_changed = last_sent_pan is None or abs(pan - last_sent_pan) >= DEADBAND_DEG
-            tilt_changed = last_sent_tilt is None or abs(tilt - last_sent_tilt) >= DEADBAND_DEG
-            now = time.monotonic()
-            time_ok = (now - last_send_time) * 1000 >= SEND_INTERVAL_MS
+                print(
+                    f"raw: pan={raw_pan:6.1f} tilt={raw_tilt:6.1f} elbow={raw_elbow:6.1f}  ->  "
+                    f"servo: pan={pan:3d} tilt={tilt:3d} elbow={elbow_angle:3d}"
+                )
 
-            if ser and time_ok and (pan_changed or tilt_changed):
-                line = f"{pan},{tilt},{elbow_angle}\n" if SEND_ELBOW else f"{pan},{tilt}\n"
-                try:
-                    ser.write(line.encode())
-                    last_sent_pan = pan
-                    last_sent_tilt = tilt
-                    last_send_time = now
-                except serial.SerialException as e:
-                    print(f"WARNING: serial write failed ({e}) - is the Arduino still connected?")
+                pan_changed = last_sent_pan is None or abs(pan - last_sent_pan) >= DEADBAND_DEG
+                tilt_changed = last_sent_tilt is None or abs(tilt - last_sent_tilt) >= DEADBAND_DEG
+                now = time.monotonic()
+                time_ok = (now - last_send_time) * 1000 >= SEND_INTERVAL_MS
 
-            cv2.putText(
-                frame,
-                f"pan:{pan} tilt:{tilt} elbow:{elbow_angle}",
-                (10, 30),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                (0, 255, 0),
-                2,
-            )
+                if ser and time_ok and (pan_changed or tilt_changed):
+                    line = f"{pan},{tilt},{elbow_angle}\n" if SEND_ELBOW else f"{pan},{tilt}\n"
+                    try:
+                        ser.write(line.encode())
+                        last_sent_pan = pan
+                        last_sent_tilt = tilt
+                        last_send_time = now
+                    except serial.SerialException as e:
+                        print(f"WARNING: serial write failed ({e}) - is the Arduino still connected?")
+
+                cv2.putText(
+                    frame,
+                    f"pan:{pan} tilt:{tilt} elbow:{elbow_angle}",
+                    (10, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.7,
+                    (0, 255, 0),
+                    2,
+                )
         else:
             cv2.putText(
                 frame, "No pose detected", (10, 30),

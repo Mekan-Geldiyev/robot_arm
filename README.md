@@ -56,6 +56,14 @@ uppercuts by copying your punches.
 - `track.py` — Python webcam tracker. Uses OpenCV + MediaPipe Pose to
   read your left shoulder/elbow/wrist/hip, computes pan/tilt angles,
   and streams them to the Arduino over serial.
+- `boxing_moves.py` — standalone, camera-free demo. Sends hardcoded
+  jab/hook/uppercut waypoint sequences over serial on keypress (`j`/`h`/
+  `u`/`r`/`q`). No MediaPipe/webcam - for showing the arm off reliably
+  while live gesture detection (recognizing a real jab/hook from the
+  camera and matching it) is worked on separately later.
+- `circle_test/circle_test.ino` — standalone Arduino sketch, no serial/
+  Python involved. Traces a continuous pan/tilt circle to sanity-check
+  the hardware (PCA9685/servos/wiring/power) in isolation.
 
 ### MediaPipe landmarks used
 
@@ -159,6 +167,27 @@ wrist).
 | Hand down at side (resting) | `180,0` | `178, -84` | Yes |
 | Hand out to the side (horizontal) | `0,90` | `133, -16` | Yes |
 | Hand out to the front (facing camera) | `90,0` | `160, -9` | **No** - see note below |
+| Elbow bent to 90 degrees | elbow=`0` | elbow raw=`58` | Yes |
+| Elbow fully straight (hanging at side) | elbow=`90` | elbow raw=`68` | Yes |
+| Wrist above shoulder ("arm up") | *TODO - sweep test needed* | - | - |
+
+> Elbow servo range is deliberately capped at 90 (not 180): a real elbow
+> doesn't hyperextend, so 90 is the natural full range end, not just a
+> mechanical safety margin like tilt's cap. Sending elbow=180 would try to
+> bend the joint past straight in reverse - don't test that value.
+
+> **Confirmed (2026-07-29): tilt servo~90 is the real mechanical peak, not
+> just a cautious cap.** With pan held at 0, sweeping tilt past 90 (tested
+> at 120) makes the physical arm reverse and swing back DOWN, bottoming
+> out fully around tilt=180 - the bracket's linkage passes over some kind
+> of mechanical top-dead-center around 90 and then folds the other way.
+> Tilt cannot reach "overhead"/"wrist above shoulder" from pan=0, no
+> matter how high it's commanded - `TILT_SERVO_MAX = 90` is correct and
+> should stay capped there. If an overhead/uppercut motion is wanted
+> later, it likely has to come from moving PAN further (recall pan alone
+> already traces hand-at-side -> hand-out-front -> hand-out-to-side as it
+> sweeps 180 -> 0), not from pushing tilt harder - unexplored territory,
+> needs its own sweep test.
 
 > **Why "hand out to the front" is unreliable:** that motion is mostly
 > toward/away from the camera (depth/z-axis), which a single monocular

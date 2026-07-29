@@ -3,8 +3,8 @@
   Elegoo Uno R3 + PCA9685 + 2x MG996R (Pan/Tilt shoulder)
 
   Receives one line of ASCII over serial:
-      "pan,tilt\n"            (current)
-      "pan,tilt,elbow\n"      (once channel 2 servo is installed)
+      "pan,tilt\n"            (elbow servo not attached)
+      "pan,tilt,elbow\n"      (elbow servo attached)
 
   Each value is an angle in degrees (0-180). The Arduino smoothly
   steps the real servo position toward the target instead of
@@ -38,13 +38,12 @@ Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver();
 
 // =============================================================
 
-int currentPan  = 90;
-int currentTilt = 90;
-int targetPan   = 90;
-int targetTilt  = 90;
-
-// Elbow value is parsed and stored but not yet driven to a servo.
-int targetElbow = 90;
+int currentPan   = 90;
+int currentTilt  = 90;
+int currentElbow = 90;
+int targetPan    = 90;
+int targetTilt   = 90;
+int targetElbow  = 90;
 
 unsigned long lastStepTime = 0;
 
@@ -59,6 +58,7 @@ void setup() {
   // Move to a safe, centered starting position.
   moveServo(PAN_CHANNEL, currentPan);
   moveServo(TILT_CHANNEL, currentTilt);
+  moveServo(ELBOW_CHANNEL, currentElbow);
 
   // Boot confirmation: 3 blinks means setup() finished (pwm.begin() didn't
   // hang on I2C). Uses the LED, not Serial, so it's safe at any send rate.
@@ -77,7 +77,7 @@ void loop() {
     lastStepTime = millis();
     stepToward(currentPan, targetPan, PAN_CHANNEL);
     stepToward(currentTilt, targetTilt, TILT_CHANNEL);
-    // Channel 2 (elbow) intentionally not driven - servo not installed yet.
+    stepToward(currentElbow, targetElbow, ELBOW_CHANNEL);
   }
 }
 
