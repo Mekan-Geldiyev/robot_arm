@@ -73,18 +73,40 @@ appearance-based (learned from mostly non-flipped training images), so on
 a flipped feed its labels come out swapped - its `RIGHT_*` indices are
 what actually correspond to the user's true left arm here.
 
-| Body part (your real left arm) | MediaPipe index |
+| Body part (your real left arm, normally) | MediaPipe index |
 |---------------------------------|------------------|
 | Shoulder                        | 12 (`RIGHT_SHOULDER`) |
 | Elbow                           | 14 (`RIGHT_ELBOW`)    |
 | Wrist                           | 16 (`RIGHT_WRIST`)    |
 | Hip                              | 24 (`RIGHT_HIP`)      |
 
+"Normally" because MediaPipe's left/right label is a per-frame guess, not a
+fixed fact - on a confusing pose it can flip which side it calls which,
+which looked like the robot arm suddenly mirroring the user's *right* arm
+instead of their left. `track.py` no longer trusts index 12/14/16/24
+blindly every frame: it also computes the alternate candidate (11/13/15/23,
+`LEFT_*`) and picks whichever side's **shoulder** sits further toward the
+frame-left edge (`SIDE_A`/`SIDE_B` + `SIDE_SWITCH_MARGIN`). Shoulder
+position, not wrist position, on purpose - wrists are supposed to cross the
+body's midline during a hook/cross, so tracking by wrist proximity could
+latch onto the wrong arm at exactly the moment (a real punch) it mattered
+most; shoulders essentially never swap left-right order during normal
+front-facing motion. Watch the `[side A/B]` tag printed to the terminal
+(and overlaid on the video) - it should read `A` almost all the time; if
+it's flickering to `B` during normal motion, `SIDE_SWITCH_MARGIN` may need
+to be raised.
+
 - **Pan** = shoulder horizontal angle: hip -> shoulder -> elbow,
   projected onto the horizontal (x/z) plane
 - **Tilt** = shoulder elevation angle: how far the upper arm is raised
   above/below horizontal
-- **Elbow** (placeholder) = shoulder -> elbow -> wrist flex angle
+- **Elbow** = 2-link IK (law of cosines) from the shoulder<->wrist distance
+  and slowly-averaged upper-arm/forearm lengths, NOT a direct read of the
+  elbow landmark's angle - the elbow landmark is frequently occluded or
+  noisy (e.g. tucked in front of the torso during a hook), so it's only
+  used to calibrate the two segment lengths, heavily smoothed, while the
+  live per-frame angle comes from shoulder+wrist alone (see
+  `elbow_ik_angle()` in `track.py`)
 
 ## Install
 
@@ -125,9 +147,25 @@ to dig through the code:
 **`track.py`**
 - `SERIAL_PORT`, `BAUD_RATE` — serial connection
 - `DEADBAND_DEG` — minimum angle change (degrees) before a new value is
-  sent; reduces jitter
+  sent; reduces jitter. Applied per-channel (pan/tilt/elbow each gated
+  independently), so one channel moving doesn't drag the others along
+- `PAN_MIN_CUTOFF/BETA`, `TILT_MIN_CUTOFF/BETA`, `ELBOW_MIN_CUTOFF/BETA`,
+  `D_CUTOFF` — One Euro Filter params applied to raw angles before
+  mapping/sending. `MIN_CUTOFF` controls smoothing when nearly still
+  (lower = smoother but slower to react), `BETA` controls how fast
+  filtering loosens up as speed increases (higher = snappier during a
+  real punch, but more jitter can leak through while moving). Elbow gets
+  a much larger `BETA` since its narrow calibration range amplifies raw
+  noise ~9x
 - `PAN_MIN/MAX`, `TILT_MIN/MAX`, `ELBOW_MIN/MAX` — raw MediaPipe angle
-  ranges seen during a full range-of-motion test
+  ranges seen during a full range-of-motion test. `ELBOW_MIN/MAX` are now
+  genuine anatomical flex degrees (180 = straight) from the IK calc above,
+  not the old landmark-angle scale - current values are an unverified
+  placeholder, re-check against the printed `raw:` line
+- `ELBOW_LENGTH_ALPHA` — how slowly the IK's arm-segment-length estimate
+  updates from the elbow landmark (0.01 = very slow/stable on purpose)
+- `DEPTH_MIN_CUTOFF/BETA` — filter for the experimental depth (z-axis)
+  signal, currently printed/overlaid only, not sent to any servo yet
 - `PAN_SERVO_MIN/MAX`, `TILT_SERVO_MIN/MAX`, `ELBOW_SERVO_MIN/MAX` —
   resulting servo angle ranges (0-180)
 - `INVERT_PAN`, `INVERT_TILT`, `INVERT_ELBOW` — flip direction if the

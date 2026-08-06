@@ -30,8 +30,13 @@ Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver();
 
 #define BAUD_RATE     9600
 
-#define STEP_SIZE     2     // degrees per smoothing step (bigger = faster, less smooth)
+#define STEP_SIZE     3     // degrees per smoothing step (bigger = faster, less smooth)
 #define STEP_DELAY_MS 15    // ms between smoothing steps
+// STEP_SIZE history: 2 (original) -> 5 on 2026-08-03 (too aggressive -
+// felt jerky/overshooting) -> 3 same day. 3 deg / 15ms = ~200 deg/sec max
+// slew, still notably faster than the original 133 deg/sec without going
+// all the way to 5's harsh landing. If punches still feel sluggish, try 4
+// before going back up to 5; if 3 still feels aggressive, drop to 2.
 
 #define ANGLE_MIN     0
 #define ANGLE_MAX     180
