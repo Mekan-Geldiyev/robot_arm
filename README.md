@@ -8,13 +8,18 @@ uppercuts by copying your punches.
 
 - Elegoo Uno R3 (Arduino clone), USB to PC, port `COM3` (may vary)
 - PCA9685 16-channel PWM servo driver
-- 2x MG996R servos (pan + tilt), 3rd elbow servo coming later
+- 4x MG996R servos: pan + tilt (shoulder gimbal), yaw (3rd shoulder DOF,
+  added 2026-08-12), elbow
 - Breadboard as the Arduino <-> PCA9685 wiring hub
 - 5V 4A power supply -> barrel jack -> screw terminal -> PCA9685 `V+`
 - Shared ground: Arduino `GND` -> PCA9685 `GND` screw terminal
 - Aluminum pan-tilt bracket, mounted **sideways** (rotated 90° from a
   normal camera-mount orientation) so the two servos give shoulder-like
   range for jab / hook / uppercut motion
+- Yaw servo glued to the **outside** of the pan/tilt bracket's metal U
+  (didn't fit inside) - rotates the whole shoulder assembly around the
+  upper-arm axis, which is what actually lets the elbow's hinge plane
+  swing out to the side for a hook
 - Lego upper arm hot-glued to the tilt servo horn, forearm + hand below it
 
 ### Wiring diagram
@@ -38,24 +43,27 @@ uppercuts by copying your punches.
             |                                        |
             +---- shared ground rail ----------------+
 
-  PCA9685 channel 0 (PAN)  -> aluminum bracket PAN servo  (horizontal axis)
-  PCA9685 channel 1 (TILT) -> aluminum bracket TILT servo (vertical axis)
-  PCA9685 channel 2 (ELBOW)-> not installed yet, placeholder in code
+  PCA9685 channel 0 (PAN)   -> aluminum bracket PAN servo  (horizontal axis)
+  PCA9685 channel 1 (TILT)  -> aluminum bracket TILT servo (vertical axis)
+  PCA9685 channel 2 (YAW)   -> shoulder YAW servo (glued to outside of bracket)
+  PCA9685 channel 3 (ELBOW) -> elbow servo
 ```
 
 - Channel 0 = **PAN** — horizontal rotation axis — jab (forward/back
   sweep) and hook (side sweep)
 - Channel 1 = **TILT** — vertical rotation axis — uppercut (arm raise)
-- Channel 2 = **ELBOW** — not installed; code has a placeholder ready
+- Channel 2 = **YAW** — rotates the shoulder around the upper-arm axis —
+  swings the elbow's hinge plane out to the side for a hook
+- Channel 3 = **ELBOW** — elbow flex
 
 ## Software
 
-- `robot_arm.ino` — Arduino sketch. Reads `"pan,tilt\n"` (or
-  `"pan,tilt,elbow\n"` later) over serial, smooths motion toward the
-  target angle instead of snapping, and drives the PCA9685.
+- `robot_arm.ino` — Arduino sketch. Reads `"pan,tilt,yaw,elbow\n"` over
+  serial, smooths motion toward the target angle instead of snapping,
+  and drives the PCA9685.
 - `track.py` — Python webcam tracker. Uses OpenCV + MediaPipe Pose to
-  read your left shoulder/elbow/wrist/hip, computes pan/tilt angles,
-  and streams them to the Arduino over serial.
+  read your left shoulder/elbow/wrist/hip, computes pan/tilt/yaw/elbow
+  angles, and streams them to the Arduino over serial.
 - `boxing_moves.py` — standalone, camera-free demo. Sends hardcoded
   jab/hook/uppercut waypoint sequences over serial on keypress (`j`/`h`/
   `u`/`r`/`q`). No MediaPipe/webcam - for showing the arm off reliably
@@ -96,10 +104,19 @@ front-facing motion. Watch the `[side A/B]` tag printed to the terminal
 it's flickering to `B` during normal motion, `SIDE_SWITCH_MARGIN` may need
 to be raised.
 
-- **Pan** = shoulder horizontal angle: hip -> shoulder -> elbow,
+- **Pan** = shoulder horizontal angle: hip -> shoulder -> wrist,
   projected onto the horizontal (x/z) plane
 - **Tilt** = shoulder elevation angle: how far the upper arm is raised
   above/below horizontal
+- **Yaw** = rotation of the shoulder-elbow-wrist plane around the
+  shoulder->wrist axis, measured against shoulder->hip as the 0-degree
+  reference (elbow hanging toward the body, like a guard/jab). Pan/tilt
+  can already point the arm anywhere in 3D, but only this rotation swings
+  the elbow's hinge plane out to the side for a hook, since the hinge
+  plane is otherwise fixed by how the elbow is physically glued on (see
+  `yaw_angle()` in `track.py`). Needs the elbow landmark to be visible
+  every frame (no slow fallback like the elbow IK below), so it holds its
+  last servo value when the elbow is occluded
 - **Elbow** = 2-link IK (law of cosines) from the shoulder<->wrist distance
   and slowly-averaged upper-arm/forearm lengths, NOT a direct read of the
   elbow landmark's angle - the elbow landmark is frequently occluded or
@@ -147,46 +164,46 @@ to dig through the code:
 **`track.py`**
 - `SERIAL_PORT`, `BAUD_RATE` — serial connection
 - `DEADBAND_DEG` — minimum angle change (degrees) before a new value is
-  sent; reduces jitter. Applied per-channel (pan/tilt/elbow each gated
-  independently), so one channel moving doesn't drag the others along
-- `PAN_MIN_CUTOFF/BETA`, `TILT_MIN_CUTOFF/BETA`, `ELBOW_MIN_CUTOFF/BETA`,
-  `D_CUTOFF` — One Euro Filter params applied to raw angles before
-  mapping/sending. `MIN_CUTOFF` controls smoothing when nearly still
-  (lower = smoother but slower to react), `BETA` controls how fast
-  filtering loosens up as speed increases (higher = snappier during a
+  sent; reduces jitter. Applied per-channel (pan/tilt/yaw/elbow each
+  gated independently), so one channel moving doesn't drag the others along
+- `PAN_MIN_CUTOFF/BETA`, `TILT_MIN_CUTOFF/BETA`, `YAW_MIN_CUTOFF/BETA`,
+  `ELBOW_MIN_CUTOFF/BETA`, `D_CUTOFF` — One Euro Filter params applied to
+  raw angles before mapping/sending. `MIN_CUTOFF` controls smoothing when
+  nearly still (lower = smoother but slower to react), `BETA` controls how
+  fast filtering loosens up as speed increases (higher = snappier during a
   real punch, but more jitter can leak through while moving). Elbow gets
   a much larger `BETA` since its narrow calibration range amplifies raw
   noise ~9x
-- `PAN_MIN/MAX`, `TILT_MIN/MAX`, `ELBOW_MIN/MAX` — raw MediaPipe angle
-  ranges seen during a full range-of-motion test. `ELBOW_MIN/MAX` are now
-  genuine anatomical flex degrees (180 = straight) from the IK calc above,
-  not the old landmark-angle scale - current values are an unverified
-  placeholder, re-check against the printed `raw:` line
+- `PAN_MIN/MAX`, `TILT_MIN/MAX`, `YAW_MIN/MAX`, `ELBOW_MIN/MAX` — raw
+  MediaPipe angle ranges seen during a full range-of-motion test.
+  `ELBOW_MIN/MAX` are genuine anatomical flex degrees (180 = straight)
+  from the IK calc above, not the old landmark-angle scale. `YAW_MIN/MAX`
+  are the hinge-plane rotation range from `yaw_angle()`. Both are
+  unverified placeholders - re-check against the printed `raw:` line
 - `ELBOW_LENGTH_ALPHA` — how slowly the IK's arm-segment-length estimate
   updates from the elbow landmark (0.01 = very slow/stable on purpose)
 - `DEPTH_MIN_CUTOFF/BETA` — filter for the experimental depth (z-axis)
   signal, currently printed/overlaid only, not sent to any servo yet
-- `PAN_SERVO_MIN/MAX`, `TILT_SERVO_MIN/MAX`, `ELBOW_SERVO_MIN/MAX` —
-  resulting servo angle ranges (0-180)
-- `INVERT_PAN`, `INVERT_TILT`, `INVERT_ELBOW` — flip direction if the
-  arm moves the wrong way
-- `SEND_ELBOW` — set `True` once the channel 2 servo is installed
+- `PAN_SERVO_MIN/MAX`, `TILT_SERVO_MIN/MAX`, `YAW_SERVO_MIN/MAX`,
+  `ELBOW_SERVO_MIN/MAX` — resulting servo angle ranges (0-180)
+- `INVERT_PAN`, `INVERT_TILT`, `INVERT_YAW`, `INVERT_ELBOW` — flip
+  direction if the arm moves the wrong way
 
 **`robot_arm.ino`**
 - `SERVOMIN` / `SERVOMAX` — PWM pulse range (currently 150 / 600)
 - `PWM_FREQ` — PCA9685 frequency (60 Hz)
-- `PAN_CHANNEL` / `TILT_CHANNEL` / `ELBOW_CHANNEL` — PCA9685 channel
-  numbers
+- `PAN_CHANNEL` / `TILT_CHANNEL` / `YAW_CHANNEL` / `ELBOW_CHANNEL` —
+  PCA9685 channel numbers
 - `STEP_SIZE` / `STEP_DELAY_MS` — smoothing speed (bigger step or
   shorter delay = faster but less smooth motion)
 
 ### Calibration workflow
 
-1. Run `track.py` and watch the `raw: pan=... tilt=... elbow=...`
+1. Run `track.py` and watch the `raw: pan=... tilt=... yaw=... elbow=...`
    values printed to the terminal while moving your arm through a jab,
    hook, and uppercut.
 2. Note the min/max raw values for each and set `PAN_MIN/MAX`,
-   `TILT_MIN/MAX` (and `ELBOW_MIN/MAX` later) accordingly.
+   `TILT_MIN/MAX`, `YAW_MIN/MAX`, and `ELBOW_MIN/MAX` accordingly.
 3. If the servo moves the opposite direction from your arm, flip the
    matching `INVERT_*` flag.
 
@@ -241,7 +258,9 @@ wrist).
 - [x] Both servos confirmed moving via tester sketch
 - [x] Pan-tilt bracket assembled (sideways orientation)
 - [x] Lego arm partially built and attached
-- [ ] Full motion tracking system (this repo)
-- [ ] Elbow servo (channel 2) installed and enabled
+- [x] Full motion tracking system (this repo)
+- [x] Elbow servo (channel 3) installed and enabled
+- [x] Yaw servo (channel 2, 3rd shoulder DOF) installed and enabled -
+      needs `YAW_MIN/MAX` hardware calibration
 - [ ] Second arm (right side)
 - [ ] Full body tracking

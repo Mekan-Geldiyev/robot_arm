@@ -1,7 +1,7 @@
 """
 Boxing Robot Arm - Canned Punch Demo
 -------------------------------------
-Standalone, camera-free demo: sends pre-programmed pan/tilt/elbow
+Standalone, camera-free demo: sends pre-programmed pan/tilt/yaw/elbow
 sequences over serial to throw a jab, hook, or uppercut on command. No
 MediaPipe/webcam involved - this is for showing the hardware off
 reliably while gesture detection (matching a real jab/hook/uppercut from
@@ -32,15 +32,18 @@ BAUD_RATE = 9600         # must match Serial.begin() in robot_arm.ino
 # give the arm enough time to actually arrive before the next move.
 DEGREES_PER_SEC = (2 / 15) * 1000
 
-# --- Named servo positions (pan, tilt, elbow) ---
-# REST/JAB_OUT/HOOK_OUT use the confirmed-safe values from the README
-# "Calibration Reference Values" table. UPPER_OUT is a first-pass style
-# choice (no dedicated uppercut ground truth exists) - all of these are
-# just a starting point, retune freely to change how a punch looks.
-REST      = (180, 0, 90)   # hand hanging straight at your side
-JAB_OUT   = (90, 0, 90)    # arm straight out to the front
-HOOK_OUT  = (0, 90, 30)    # arm out to the side, elbow bent for a hook shape
-UPPER_OUT = (90, 60, 20)   # partway up + tight elbow bend, snapping up
+# --- Named servo positions (pan, tilt, yaw, elbow) ---
+# REST/JAB_OUT/HOOK_OUT pan/tilt/elbow values use the confirmed-safe values
+# from the README "Calibration Reference Values" table. UPPER_OUT is a
+# first-pass style choice (no dedicated uppercut ground truth exists). Yaw
+# (added 2026-08-12, no hardware ground truth yet) is 90 (neutral/no
+# rotation) everywhere except HOOK_OUT, which offsets it to actually swing
+# the elbow's hinge plane out to the side - all of these are just a
+# starting point, retune freely to change how a punch looks.
+REST      = (180, 0, 90, 90)   # hand hanging straight at your side
+JAB_OUT   = (90, 0, 90, 90)    # arm straight out to the front
+HOOK_OUT  = (0, 90, 130, 30)   # arm out to the side, yaw rotated + elbow bent for a hook shape
+UPPER_OUT = (90, 60, 90, 20)   # partway up + tight elbow bend, snapping up
 
 HOLD_SECONDS = 0.15        # how long to hold the extended position before retracting
 
@@ -55,8 +58,8 @@ def wait_for(pos_from, pos_to):
 
 
 def send(ser, pos):
-    pan, tilt, elbow = pos
-    ser.write(f"{pan},{tilt},{elbow}\n".encode())
+    pan, tilt, yaw, elbow = pos
+    ser.write(f"{pan},{tilt},{yaw},{elbow}\n".encode())
 
 
 def move_to(ser, current, target):

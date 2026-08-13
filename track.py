@@ -2,8 +2,8 @@
 Boxing Robot Arm - Real-Time Motion Mirroring
 -----------------------------------------------
 Tracks the user's LEFT arm with MediaPipe Pose and streams
-"pan,tilt\n" servo angles to the Arduino over serial, which then
-smoothly drives the shoulder servos to match.
+"pan,tilt,yaw,elbow\n" servo angles to the Arduino over serial, which then
+smoothly drives the shoulder/elbow servos to match.
 
 Run:   python track.py
 Quit:  press 'q' with the webcam window focused
@@ -82,6 +82,7 @@ DEADBAND_DEG = 2
 # responsiveness during a punch.
 PAN_MIN_CUTOFF, PAN_BETA = 0.4, 0.03
 TILT_MIN_CUTOFF, TILT_BETA = 0.4, 0.03
+YAW_MIN_CUTOFF, YAW_BETA = 0.4, 0.03
 ELBOW_MIN_CUTOFF, ELBOW_BETA = 0.15, 0.10
 # ELBOW_MIN_CUTOFF/BETA history: 0.2/0.15 (with the IK fix) -> 0.15/0.10 on
 # 2026-08-05, user reported it still "tweaking"/switching fast - lowered
@@ -99,9 +100,6 @@ DEPTH_MIN_CUTOFF, DEPTH_BETA = 0.4, 0.03
 
 # --- Don't flood the serial link faster than this, independent of camera FPS ---
 SEND_INTERVAL_MS = 40   # ~25 updates/sec - plenty for smooth servo motion
-
-# --- Elbow (channel 2) servo is installed ---
-SEND_ELBOW = True
 
 # --- Skip frames where MediaPipe isn't confident about a landmark's
 # position (e.g. a hand raised near/above the top of the frame, or an arm
@@ -187,6 +185,21 @@ INVERT_ELBOW = False
 # raw (more bent -> more straight) still maps to increasing servo (0 -> 90,
 # where 90 = straight), same as before.
 
+# Yaw (3rd shoulder DOF, added 2026-08-12): rotates the whole shoulder
+# assembly around the shoulder->wrist axis, which is what actually swings
+# the elbow's hinge plane out to the side for a hook - pan/tilt alone can
+# already point the arm anywhere, but can't rotate that plane since it's
+# fixed by how the elbow is physically glued on. See yaw_angle() below for
+# how the raw signal is computed.
+#
+# Placeholder range below is a guess (small rotation for guard/jab, wider
+# for a hook) - NOT yet hardware-verified. Watch the printed "raw: ...
+# yaw=" values while moving through guard -> jab -> hook and correct these
+# two numbers before trusting the servo output, same as ELBOW_MIN/MAX above.
+YAW_MIN, YAW_MAX = -90, 90            # raw hinge-plane rotation range (needs verification)
+YAW_SERVO_MIN, YAW_SERVO_MAX = 0, 180
+INVERT_YAW = False
+
 # EMA smoothing factor for the L1/L2 arm-segment-length estimates used by
 # the elbow IK below. Very slow on purpose (0.01 = ~99% history) - segment
 # lengths are basically constant for a given person at a given distance
@@ -267,6 +280,67 @@ def elevation_angle(shoulder, wrist):
 def landmark_distance(a, b, keys=("x", "y")):
     k1, k2 = keys
     return math.hypot(getattr(a, k1) - getattr(b, k1), getattr(a, k2) - getattr(b, k2))
+
+
+def landmark_vec3(a, b):
+    return (b.x - a.x, b.y - a.y, b.z - a.z)
+
+
+def v_sub(u, v):
+    return (u[0] - v[0], u[1] - v[1], u[2] - v[2])
+
+
+def v_scale(u, s):
+    return (u[0] * s, u[1] * s, u[2] * s)
+
+
+def v_dot(u, v):
+    return u[0] * v[0] + u[1] * v[1] + u[2] * v[2]
+
+
+def v_cross(u, v):
+    return (
+        u[1] * v[2] - u[2] * v[1],
+        u[2] * v[0] - u[0] * v[2],
+        u[0] * v[1] - u[1] * v[0],
+    )
+
+
+def v_len(u):
+    return math.sqrt(v_dot(u, u))
+
+
+def yaw_angle(shoulder, elbow, wrist, hip):
+    """Signed rotation (degrees) of the shoulder-elbow-wrist hinge plane
+    around the shoulder->wrist axis, measured against shoulder->hip as the
+    0-degree reference (elbow hanging toward the body, like a guard/jab).
+    This is the "elbow hinge plane" angle - the pan/tilt gimbal can already
+    point the arm anywhere in 3D, but only rotating around this axis swings
+    the elbow's bend out to the side (a hook), since the elbow's hinge
+    plane is otherwise fixed by how it's physically mounted."""
+    d = landmark_vec3(shoulder, wrist)
+    d_len = v_len(d)
+    if d_len < 1e-6:
+        return None
+    d_hat = v_scale(d, 1.0 / d_len)
+
+    e = landmark_vec3(shoulder, elbow)
+    e_perp = v_sub(e, v_scale(d_hat, v_dot(e, d_hat)))
+    r = landmark_vec3(shoulder, hip)
+    r_perp = v_sub(r, v_scale(d_hat, v_dot(r, d_hat)))
+
+    e_len = v_len(e_perp)
+    r_len = v_len(r_perp)
+    if e_len < 1e-6 or r_len < 1e-6:
+        return None
+
+    cos_angle = clamp(v_dot(e_perp, r_perp) / (e_len * r_len), -1.0, 1.0)
+    angle = math.degrees(math.acos(cos_angle))
+
+    # Sign distinguishes the elbow swinging out to one side of the
+    # reference plane vs the other (e.g. a right hook vs a left hook).
+    sign = 1.0 if v_dot(v_cross(r_perp, e_perp), d_hat) >= 0 else -1.0
+    return sign * angle
 
 
 def elbow_ik_angle(l1, l2, d):
@@ -371,10 +445,12 @@ def main():
 
     last_sent_pan = None
     last_sent_tilt = None
+    last_sent_yaw = None
     last_sent_elbow = None
     last_send_time = 0.0
     pan_filter = OneEuroFilter(PAN_MIN_CUTOFF, PAN_BETA, D_CUTOFF)
     tilt_filter = OneEuroFilter(TILT_MIN_CUTOFF, TILT_BETA, D_CUTOFF)
+    yaw_filter = OneEuroFilter(YAW_MIN_CUTOFF, YAW_BETA, D_CUTOFF)
     elbow_filter = OneEuroFilter(ELBOW_MIN_CUTOFF, ELBOW_BETA, D_CUTOFF)
     depth_filter = OneEuroFilter(DEPTH_MIN_CUTOFF, DEPTH_BETA, D_CUTOFF)
     elbow_l1 = None  # slow EMA estimate of shoulder->elbow length (IK)
@@ -461,6 +537,12 @@ def main():
                     if elbow_l1 is not None else None
                 )
 
+                # Yaw needs the elbow's actual current position (unlike the
+                # elbow IK above, there's no slow length estimate to fall
+                # back on), so it's only computed on frames the elbow is
+                # confidently visible - held at its last servo value otherwise.
+                raw_yaw = yaw_angle(shoulder, elbow, wrist, hip) if elbow_visible else None
+
                 # Depth instrumentation only (see DEPTH_MIN_CUTOFF above) - not
                 # sent anywhere yet, just observed. More negative z = farther
                 # from the camera than the hip-relative origin MediaPipe uses;
@@ -487,11 +569,20 @@ def main():
                     # instead of guessing.
                     elbow_angle = last_sent_elbow if last_sent_elbow is not None else (ELBOW_SERVO_MIN + ELBOW_SERVO_MAX) // 2
 
+                if raw_yaw is not None:
+                    smooth_yaw = yaw_filter(frame_time, raw_yaw)
+                    yaw = int(map_range(smooth_yaw, YAW_MIN, YAW_MAX, YAW_SERVO_MIN, YAW_SERVO_MAX, INVERT_YAW))
+                else:
+                    # Elbow not visible this frame - hold the last known yaw
+                    # servo position instead of guessing.
+                    yaw = last_sent_yaw if last_sent_yaw is not None else (YAW_SERVO_MIN + YAW_SERVO_MAX) // 2
+
                 side_label = "A" if tracked_side is SIDE_A else "B"
                 raw_elbow_str = f"{raw_elbow:6.1f}" if raw_elbow is not None else "  n/a "
+                raw_yaw_str = f"{raw_yaw:6.1f}" if raw_yaw is not None else "  n/a "
                 print(
-                    f"[side {side_label}] raw: pan={raw_pan:6.1f} tilt={raw_tilt:6.1f} elbow={raw_elbow_str} depth={smooth_depth:+.3f}  ->  "
-                    f"servo: pan={pan:3d} tilt={tilt:3d} elbow={elbow_angle:3d}"
+                    f"[side {side_label}] raw: pan={raw_pan:6.1f} tilt={raw_tilt:6.1f} yaw={raw_yaw_str} elbow={raw_elbow_str} depth={smooth_depth:+.3f}  ->  "
+                    f"servo: pan={pan:3d} tilt={tilt:3d} yaw={yaw:3d} elbow={elbow_angle:3d}"
                 )
 
                 # Each channel is gated against its OWN last sent value, independently.
@@ -502,20 +593,23 @@ def main():
                 # the elbow servo for motion that was never actually elbow motion.
                 pan_changed = last_sent_pan is None or abs(pan - last_sent_pan) >= DEADBAND_DEG
                 tilt_changed = last_sent_tilt is None or abs(tilt - last_sent_tilt) >= DEADBAND_DEG
+                yaw_changed = last_sent_yaw is None or abs(yaw - last_sent_yaw) >= DEADBAND_DEG
                 elbow_changed = last_sent_elbow is None or abs(elbow_angle - last_sent_elbow) >= DEADBAND_DEG
 
                 send_pan = pan if pan_changed else last_sent_pan
                 send_tilt = tilt if tilt_changed else last_sent_tilt
+                send_yaw = yaw if yaw_changed else last_sent_yaw
                 send_elbow = elbow_angle if elbow_changed else last_sent_elbow
 
                 time_ok = (frame_time - last_send_time) * 1000 >= SEND_INTERVAL_MS
 
-                if ser and time_ok and (pan_changed or tilt_changed or elbow_changed):
-                    line = f"{send_pan},{send_tilt},{send_elbow}\n" if SEND_ELBOW else f"{send_pan},{send_tilt}\n"
+                if ser and time_ok and (pan_changed or tilt_changed or yaw_changed or elbow_changed):
+                    line = f"{send_pan},{send_tilt},{send_yaw},{send_elbow}\n"
                     try:
                         ser.write(line.encode())
                         last_sent_pan = send_pan
                         last_sent_tilt = send_tilt
+                        last_sent_yaw = send_yaw
                         last_sent_elbow = send_elbow
                         last_send_time = frame_time
                     except serial.SerialException as e:
@@ -523,7 +617,7 @@ def main():
 
                 cv2.putText(
                     frame,
-                    f"[{side_label}] pan:{pan} tilt:{tilt} elbow:{elbow_angle}  depth:{smooth_depth:+.2f}",
+                    f"[{side_label}] pan:{pan} tilt:{tilt} yaw:{yaw} elbow:{elbow_angle}  depth:{smooth_depth:+.2f}",
                     (10, 30),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.7,

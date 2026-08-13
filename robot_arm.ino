@@ -1,10 +1,9 @@
 /*
   Boxing Robot Arm - Motion Mirror
-  Elegoo Uno R3 + PCA9685 + 2x MG996R (Pan/Tilt shoulder)
+  Elegoo Uno R3 + PCA9685 + 4x MG996R (Pan/Tilt/Yaw shoulder + Elbow)
 
   Receives one line of ASCII over serial:
-      "pan,tilt\n"            (elbow servo not attached)
-      "pan,tilt,elbow\n"      (elbow servo attached)
+      "pan,tilt,yaw,elbow\n"
 
   Each value is an angle in degrees (0-180). The Arduino smoothly
   steps the real servo position toward the target instead of
@@ -26,17 +25,21 @@ Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver();
 
 #define PAN_CHANNEL   0     // horizontal sweep - jab (forward/back) + hook (side)
 #define TILT_CHANNEL  1     // vertical raise - uppercut
-#define ELBOW_CHANNEL 2     // NOT INSTALLED YET - placeholder for later
+#define YAW_CHANNEL   2     // shoulder rotation - swings the elbow's hinge plane for hooks
+#define ELBOW_CHANNEL 3     // elbow flex
 
 #define BAUD_RATE     9600
 
 #define STEP_SIZE     3     // degrees per smoothing step (bigger = faster, less smooth)
-#define STEP_DELAY_MS 15    // ms between smoothing steps
+#define STEP_DELAY_MS 17    // ms between smoothing steps
 // STEP_SIZE history: 2 (original) -> 5 on 2026-08-03 (too aggressive -
 // felt jerky/overshooting) -> 3 same day. 3 deg / 15ms = ~200 deg/sec max
 // slew, still notably faster than the original 133 deg/sec without going
 // all the way to 5's harsh landing. If punches still feel sluggish, try 4
 // before going back up to 5; if 3 still feels aggressive, drop to 2.
+// STEP_DELAY_MS bumped 15 -> 17 on 2026-08-12 (yaw axis added) - a small,
+// deliberate slowdown (~200 -> ~176 deg/sec max slew) per user request to
+// take the edge off, without undoing the 2026-08-03 speed-up above.
 
 #define ANGLE_MIN     0
 #define ANGLE_MAX     180
@@ -45,9 +48,11 @@ Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver();
 
 int currentPan   = 90;
 int currentTilt  = 90;
+int currentYaw   = 90;
 int currentElbow = 90;
 int targetPan    = 90;
 int targetTilt   = 90;
+int targetYaw    = 90;
 int targetElbow  = 90;
 
 unsigned long lastStepTime = 0;
@@ -63,6 +68,7 @@ void setup() {
   // Move to a safe, centered starting position.
   moveServo(PAN_CHANNEL, currentPan);
   moveServo(TILT_CHANNEL, currentTilt);
+  moveServo(YAW_CHANNEL, currentYaw);
   moveServo(ELBOW_CHANNEL, currentElbow);
 
   // Boot confirmation: 3 blinks means setup() finished (pwm.begin() didn't
@@ -82,6 +88,7 @@ void loop() {
     lastStepTime = millis();
     stepToward(currentPan, targetPan, PAN_CHANNEL);
     stepToward(currentTilt, targetTilt, TILT_CHANNEL);
+    stepToward(currentYaw, targetYaw, YAW_CHANNEL);
     stepToward(currentElbow, targetElbow, ELBOW_CHANNEL);
   }
 }
@@ -116,20 +123,20 @@ void readSerial() {
   }
 }
 
-// Parses "pan,tilt" or "pan,tilt,elbow" and updates target angles.
+// Parses "pan,tilt,yaw,elbow" and updates target angles.
 void parseLine(char *line) {
   char *panStr = strtok(line, ",");
   char *tiltStr = strtok(NULL, ",");
+  char *yawStr = strtok(NULL, ",");
   char *elbowStr = strtok(NULL, ",");
-  if (panStr == NULL || tiltStr == NULL) return; // malformed line, ignore
-
-  targetPan  = constrain(atoi(panStr), ANGLE_MIN, ANGLE_MAX);
-  targetTilt = constrain(atoi(tiltStr), ANGLE_MIN, ANGLE_MAX);
-
-  if (elbowStr != NULL) {
-    targetElbow = constrain(atoi(elbowStr), ANGLE_MIN, ANGLE_MAX);
-    // Channel 2 servo not installed yet - value stored but not sent.
+  if (panStr == NULL || tiltStr == NULL || yawStr == NULL || elbowStr == NULL) {
+    return; // malformed line, ignore
   }
+
+  targetPan   = constrain(atoi(panStr), ANGLE_MIN, ANGLE_MAX);
+  targetTilt  = constrain(atoi(tiltStr), ANGLE_MIN, ANGLE_MAX);
+  targetYaw   = constrain(atoi(yawStr), ANGLE_MIN, ANGLE_MAX);
+  targetElbow = constrain(atoi(elbowStr), ANGLE_MIN, ANGLE_MAX);
 
   // Toggle the LED every time a valid command is parsed - safe at any
   // send rate (unlike Serial.println, which caused the earlier hang).
