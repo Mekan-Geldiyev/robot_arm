@@ -1,0 +1,48 @@
+{
+  "calibration_positions": {
+    "HAND_OUT_CENTER": {
+      "mediapipe": [168, -12, 0, 180],
+      "servo": [0, 90, 0, 90]
+    },
+    "HAND_DOWN": {
+      "mediapipe": [146, -82, -27, 106],
+      "servo": [0, 180, 90, 90]
+    },
+    "HAND_LEFT_UP": {
+      "mediapipe": [128, 21, -61, 155],
+      "servo": [0, 40, 90, 90]
+    },
+    "HAND_LEFT_MIDDLE": {
+      "mediapipe": [115, -1, -55, 139],
+      "servo": [0, 90, 90, 90]
+    },
+    "HAND_LEFT_DOWN": {
+      "mediapipe": [176, -50, -50, 141],
+      "servo": [40, 90, 90, 90]
+    },
+    "HAND_UP_LEFT_DIAGONAL": {
+      "mediapipe": [146, 37, 0, 122],
+      "servo": [0, 50, 30, 90]
+    },
+    "BOXING_JAB": {
+      "mediapipe": [150, 1, -55, 50],
+      "servo": [0, 90, 0, 90]
+    },
+    "BOXING_HOOK_SETUP": {
+      "mediapipe": [180, 14, 0, 180],
+      "servo": [0, 90, 130, 0]
+    },
+    "HAND_FORWARD_LOW": {
+      "mediapipe": [161, -74, -35, 43],
+      "servo": [20, 90, 0, 90]
+    },
+    "ELBOW_BENT_REST": {
+      "mediapipe": [165, -75, 0, 154],
+      "servo": [0, 180, 0, 0]
+    },
+    "HAND_LEFT_EXTENDED": {
+      "mediapipe": [115, -2, -50, 112],
+      "servo": [0, 110, 90, 90]
+    }
+  }
+}

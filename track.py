@@ -667,7 +667,7 @@ def main():
                 raw_yaw_str = f"{raw_yaw:6.1f}" if raw_yaw is not None else "  n/a "
                 print(
                     f"[side {side_label}] raw: pan={raw_pan:6.1f} tilt={raw_tilt:6.1f} yaw={raw_yaw_str} elbow={raw_elbow_str} depth={smooth_depth:+.3f}  ->  "
-                    f"servo: pan={pan:3d} tilt={tilt:3d} yaw={yaw:3d} elbow={elbow_angle:3d}"
+                    #f"servo: pan={pan:3d} tilt={tilt:3d} yaw={yaw:3d} elbow={elbow_angle:3d}"
                 )
 
                 # Each channel is gated against its OWN last sent value, independently.

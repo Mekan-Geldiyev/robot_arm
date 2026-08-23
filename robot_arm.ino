@@ -30,8 +30,8 @@ Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver();
 
 #define BAUD_RATE     9600
 
-#define STEP_SIZE     3     // degrees per smoothing step (bigger = faster, less smooth)
-#define STEP_DELAY_MS 18    // ms between smoothing steps
+#define STEP_SIZE     2     // degrees per smoothing step (bigger = faster, less smooth)
+#define STEP_DELAY_MS 20    // ms between smoothing steps
 // STEP_SIZE history: 2 (original) -> 5 on 2026-08-03 (too aggressive -
 // felt jerky/overshooting) -> 3 same day. 3 deg / 15ms = ~200 deg/sec max
 // slew, still notably faster than the original 133 deg/sec without going
@@ -45,6 +45,15 @@ Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver();
 // take a little more shock off the joints without meaningfully hurting
 // responsiveness - go back to STEP_SIZE (bigger effect per step) if this
 // is still too small to matter.
+// Dropped STEP_SIZE 3->2 and bumped STEP_DELAY_MS 18->20 same day again
+// after "insanely finnicky" feedback testing the interpolation approach -
+// this is a bigger cut than the earlier "littlest bit" nudges (~167 ->
+// ~100 deg/sec max slew, ~40% slower) since the complaint was stronger.
+// This affects BOTH track.py and track_interpolation.py equally, since
+// it's the same firmware regardless of which Python script is sending
+// commands - the real jitter fix (interpolation output flickering between
+// nearest-neighbor sets) was addressed in track_interpolation.py itself,
+// this just slows the physical response on top of that.
 
 #define ANGLE_MIN     0
 #define ANGLE_MAX     180
@@ -128,12 +137,24 @@ void readSerial() {
   }
 }
 
-// Parses either "pan,tilt,yaw,elbow" (all 4 targets at once, what track.py
-// sends) or a single named command "name:value" e.g. "yaw:90" (jogs just
-// that one channel, leaving the other 3 targets exactly where they were) -
-// the named form is for hand-calibrating one servo at a time from the
-// Serial Monitor without having to know/resend the other three every time.
+// Parses "pan,tilt,yaw,elbow" (all 4 targets at once, what track.py sends),
+// a single named jog command "name:value" e.g. "yaw:90" (moves just that
+// one channel), or the bare word "print" (dumps the current actual angle of
+// all 4 channels, comma-separated - after jogging channels one at a time to
+// hand-build a pose, this is how you read back the full "pan,tilt,yaw,elbow"
+// combination to record as calibration ground truth).
 void parseLine(char *line) {
+  if (strcmp(line, "print") == 0) {
+    Serial.print(currentPan);
+    Serial.print(',');
+    Serial.print(currentTilt);
+    Serial.print(',');
+    Serial.print(currentYaw);
+    Serial.print(',');
+    Serial.println(currentElbow);
+    return;
+  }
+
   char *colon = strchr(line, ':');
   if (colon != NULL) {
     *colon = '\0';
