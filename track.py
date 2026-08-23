@@ -35,6 +35,21 @@ BAUD_RATE = 9600           # must match Serial.begin() in robot_arm.ino
 # --- Camera ---
 CAMERA_INDEX = 0
 
+# --- Crop out the frame-right region before pose detection so the user's
+# real RIGHT arm (e.g. holding a phone up to film) is never actually visible
+# to MediaPipe, not just filtered out after the fact by SIDE_A/SIDE_B
+# picking - that per-frame candidate selection only picks which label to
+# trust, it can't stop a fully-visible second arm from pulling the tracked
+# arm's own landmark ESTIMATES off toward it (a known monocular pose-model
+# failure mode: occluded/ambiguous joints get inferred using cues from the
+# other visible limb). After the mirror flip below, the user's true left
+# arm sits on the frame-left side and the real right arm on frame-right, so
+# cropping to the leftmost fraction removes the right arm at the source.
+# 1.0 = no crop (both arms visible, old behavior). Lower this if the right
+# arm is still creeping into the cropped region; raise it if a left hook's
+# full swing is getting clipped off the right edge of the video window.
+CROP_RIGHT_FRAC = 0.65
+
 # --- Pose model (downloaded automatically on first run) ---
 # Using "full" instead of "lite": meaningfully better landmark accuracy/
 # confidence (fewer low-confidence holds, less jitter on tricky poses like
@@ -134,6 +149,20 @@ VISIBILITY_MIN = 0.5
 PAN_MIN, PAN_MAX = 133, 178           # raw shoulder horizontal angle range
 PAN_SERVO_MIN, PAN_SERVO_MAX = 0, 180
 INVERT_PAN = True
+
+# Hardware note (2026-08-12): pan is the base joint - the tilt/yaw/elbow
+# assembly and forearm are all mounted on top of it, so on the current
+# build sweeping pan doesn't just point the arm left/right, it rolls the
+# entire downstream assembly with it, which is what flips the hand's
+# orientation past a certain point. Locking pan (PAN_LOCKED=True) avoids
+# the flip but loses all front-vs-side distinction, since pan is the only
+# channel that encodes horizontal aim - re-opened per user request
+# (distinction matters more right now than the flip). Real fix is
+# mechanical (decouple pan's axis from roll on the next rebuild), not
+# software - re-lock this if the flip becomes the bigger problem again.
+PAN_LOCKED = False
+PAN_LOCK_VALUE = 0
+
 # Fitted from real Serial Monitor ground truth (see README "Calibration
 # Reference Values"): with INVERT_PAN off, raw=178 <-> servo=180 (hand at
 # side), raw=133 <-> servo=0 (hand out to the side). Narrower than it used
@@ -185,6 +214,19 @@ INVERT_ELBOW = False
 # raw (more bent -> more straight) still maps to increasing servo (0 -> 90,
 # where 90 = straight), same as before.
 
+# When the arm is straight (jab), the elbow sits almost exactly on the
+# shoulder->wrist line, so its offset FROM that line - what yaw_angle()
+# measures - shrinks toward zero and its direction becomes dominated by
+# landmark noise (a near-zero vector's angle is inherently unstable, not a
+# calibration problem). That's why yaw looked like it "wasn't moving" when
+# the arm was held straight out - there's no real hinge-plane signal there
+# to move. Fade raw_yaw toward neutral as the elbow (from the IK above)
+# straightens past this threshold, so a jab reads as intentionally centered
+# instead of chasing noise; below it, the hook/guard bend is enough for the
+# plane angle to mean something and the full signal is used.
+YAW_ELBOW_FADE_START = 170  # raw elbow degrees - fade begins here (170 = nearly straight)
+YAW_ELBOW_FADE_END = 150    # raw elbow degrees - full yaw signal at/below this bend
+
 # Yaw (3rd shoulder DOF, added 2026-08-12): rotates the whole shoulder
 # assembly around the shoulder->wrist axis, which is what actually swings
 # the elbow's hinge plane out to the side for a hook - pan/tilt alone can
@@ -196,9 +238,41 @@ INVERT_ELBOW = False
 # for a hook) - NOT yet hardware-verified. Watch the printed "raw: ...
 # yaw=" values while moving through guard -> jab -> hook and correct these
 # two numbers before trusting the servo output, same as ELBOW_MIN/MAX above.
-YAW_MIN, YAW_MAX = -90, 90            # raw hinge-plane rotation range (needs verification)
+# YAW_MIN widened -90 -> -120 on 2026-08-12: real terminal output regularly
+# showed raw yaw down to -115, well past the old -90 floor - map_range()
+# clamps anything past YAW_MIN to the same output, so the servo was pegged
+# at one extreme (then the safety floor below) almost the entire time
+# instead of tracking real motion. Still a guess on the exact edge, but
+# matches the data actually observed instead of the original blind guess.
+YAW_MIN, YAW_MAX = -120, 90           # raw hinge-plane rotation range (needs verification)
 YAW_SERVO_MIN, YAW_SERVO_MAX = 0, 180
 INVERT_YAW = False
+
+# The yaw servo horn was hand-glued onto the outside of the shoulder
+# bracket, so which physical servo angle actually makes the arm's real-world
+# rotation "correct" (e.g. palm down, not upside-down, when the arm's out to
+# the side) is a mounting fact, not something the raw_yaw formula can know -
+# it assumes raw_yaw==0 (its neutral/guard reference) belongs at the servo
+# sweep's plain midpoint (90), which only holds if the horn happened to get
+# glued on dead-center. It didn't, based on the reported upside-down hand.
+#
+# To fix: hold the arm straight out to the side (elbow extended enough that
+# YAW_ELBOW_FADE_START above forces raw_yaw toward 0 - this is the pose
+# YAW_SERVO_OFFSET is measured against), then use the Arduino Serial
+# Monitor to send yaw servo values directly until the hand's orientation
+# actually looks right (palm down). Whatever value that is, minus 90 (the
+# old assumed center), is YAW_SERVO_OFFSET below.
+YAW_SERVO_OFFSET = 0  # degrees added to the mapped yaw output - PLACEHOLDER, set from the test above
+
+# TEMPORARY hardware safety floor (2026-08-12): the yaw servo horn is
+# hand-glued on with limited real range right now (yaw:0 was confirmed
+# "hella bad" - binds/strains against the mount) - a proper reglue for
+# full range of motion is planned but hasn't happened yet. Until then,
+# never let the commanded yaw servo value go below this, no matter what
+# raw_yaw/mapping/offset computed - 40 is a value the user confirmed looks
+# and feels fine on the current glue job. Remove this floor (or set it back
+# to 0) once the mount is rebuilt for full range.
+YAW_SAFE_FLOOR = 40
 
 # EMA smoothing factor for the L1/L2 arm-segment-length estimates used by
 # the elbow IK below. Very slow on purpose (0.01 = ~99% history) - segment
@@ -278,8 +352,7 @@ def elevation_angle(shoulder, wrist):
 
 
 def landmark_distance(a, b, keys=("x", "y")):
-    k1, k2 = keys
-    return math.hypot(getattr(a, k1) - getattr(b, k1), getattr(a, k2) - getattr(b, k2))
+    return math.hypot(*(getattr(a, k) - getattr(b, k) for k in keys))
 
 
 def landmark_vec3(a, b):
@@ -467,6 +540,8 @@ def main():
 
         frame_time = time.monotonic()
         frame = cv2.flip(frame, 1)  # mirror view, feels more natural to stand in front of
+        if CROP_RIGHT_FRAC < 1.0:
+            frame = frame[:, : int(frame.shape[1] * CROP_RIGHT_FRAC)]
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
         timestamp_ms = int((frame_time - start_time) * 1000)
@@ -522,16 +597,20 @@ def main():
                 # signal; l1/l2 (arm segment lengths) only update - slowly -
                 # when the elbow landmark itself is confidently visible, so a
                 # momentary bad elbow read can't corrupt this frame's angle.
+                # Uses x/y/z (not just x/y) - an arm pointed mostly along the
+                # camera's depth axis (e.g. hanging straight down close to
+                # the body) foreshortens in the image plane even when fully
+                # extended, which was reading as "bent" using x/y alone.
                 if elbow_visible:
-                    l1_frame = landmark_distance(shoulder, elbow)
-                    l2_frame = landmark_distance(elbow, wrist)
+                    l1_frame = landmark_distance(shoulder, elbow, keys=("x", "y", "z"))
+                    l2_frame = landmark_distance(elbow, wrist, keys=("x", "y", "z"))
                     if elbow_l1 is None:
                         elbow_l1, elbow_l2 = l1_frame, l2_frame  # bootstrap
                     else:
                         elbow_l1 += ELBOW_LENGTH_ALPHA * (l1_frame - elbow_l1)
                         elbow_l2 += ELBOW_LENGTH_ALPHA * (l2_frame - elbow_l2)
 
-                wrist_shoulder_dist = landmark_distance(shoulder, wrist)
+                wrist_shoulder_dist = landmark_distance(shoulder, wrist, keys=("x", "y", "z"))
                 raw_elbow = (
                     elbow_ik_angle(elbow_l1, elbow_l2, wrist_shoulder_dist)
                     if elbow_l1 is not None else None
@@ -542,6 +621,9 @@ def main():
                 # back on), so it's only computed on frames the elbow is
                 # confidently visible - held at its last servo value otherwise.
                 raw_yaw = yaw_angle(shoulder, elbow, wrist, hip) if elbow_visible else None
+                if raw_yaw is not None and raw_elbow is not None:
+                    fade = (YAW_ELBOW_FADE_START - raw_elbow) / (YAW_ELBOW_FADE_START - YAW_ELBOW_FADE_END)
+                    raw_yaw *= clamp(fade, 0.0, 1.0)
 
                 # Depth instrumentation only (see DEPTH_MIN_CUTOFF above) - not
                 # sent anywhere yet, just observed. More negative z = farther
@@ -557,7 +639,7 @@ def main():
                 smooth_pan = pan_filter(frame_time, raw_pan)
                 smooth_tilt = tilt_filter(frame_time, raw_tilt)
 
-                pan = int(map_range(smooth_pan, PAN_MIN, PAN_MAX, PAN_SERVO_MIN, PAN_SERVO_MAX, INVERT_PAN))
+                pan = PAN_LOCK_VALUE if PAN_LOCKED else int(map_range(smooth_pan, PAN_MIN, PAN_MAX, PAN_SERVO_MIN, PAN_SERVO_MAX, INVERT_PAN))
                 tilt = int(map_range(smooth_tilt, TILT_MIN, TILT_MAX, TILT_SERVO_MIN, TILT_SERVO_MAX, INVERT_TILT))
 
                 if raw_elbow is not None:
@@ -571,11 +653,14 @@ def main():
 
                 if raw_yaw is not None:
                     smooth_yaw = yaw_filter(frame_time, raw_yaw)
-                    yaw = int(map_range(smooth_yaw, YAW_MIN, YAW_MAX, YAW_SERVO_MIN, YAW_SERVO_MAX, INVERT_YAW))
+                    mapped_yaw = map_range(smooth_yaw, YAW_MIN, YAW_MAX, YAW_SERVO_MIN, YAW_SERVO_MAX, INVERT_YAW)
+                    yaw = int(clamp(mapped_yaw + YAW_SERVO_OFFSET, 0, 180))
                 else:
                     # Elbow not visible this frame - hold the last known yaw
                     # servo position instead of guessing.
                     yaw = last_sent_yaw if last_sent_yaw is not None else (YAW_SERVO_MIN + YAW_SERVO_MAX) // 2
+
+                yaw = max(yaw, YAW_SAFE_FLOOR)
 
                 side_label = "A" if tracked_side is SIDE_A else "B"
                 raw_elbow_str = f"{raw_elbow:6.1f}" if raw_elbow is not None else "  n/a "
