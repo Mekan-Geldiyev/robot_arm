@@ -79,6 +79,28 @@ IDW_POWER = 1.0
 OUTPUT_MIN_CUTOFF = 0.2
 OUTPUT_BETA = 0.015
 
+# Flags a frame as "low confidence" when even the SINGLE nearest calibration
+# point is this far away (in the same normalized distance units as
+# InterpolationMapper.interpolate()'s "d=" log output - roughly "fraction of
+# that channel's calibration-set range", summed in quadrature across all 4
+# channels). This doesn't change the servo output at all, it's purely a
+# signal for deciding what to calibrate next: if this keeps firing for a
+# pose you care about, that region has no real coverage yet and needs a new
+# calibration_data.json entry, not more interpolation tuning. Starting
+# guess based on distances observed during testing - tighten/loosen once
+# you've watched it fire (or not) across a range of real poses.
+LOW_CONFIDENCE_DISTANCE = 0.6
+
+# The opposite end of the same idea: when the nearest calibration point is
+# THIS close (same normalized units as LOW_CONFIDENCE_DISTANCE), stop
+# blending in the 2nd/3rd neighbors at all and just use that single point's
+# servo values directly. Blending in a distant neighbor at low weight still
+# drags the output away from a calibration point you're basically standing
+# on - e.g. at d=0.07 from a point, a 3rd neighbor at d=0.65 can still pull
+# ~8% of the result toward itself. "Warm" poses should just BE that
+# position, not a 92/8 blend leaning toward it.
+SNAP_DISTANCE = 0.15
+
 # ============================================================
 
 
@@ -149,19 +171,36 @@ class InterpolationMapper:
         self.k = min(k, len(positions))
         self.power = power
 
+        # Per-channel scale for distance normalization - without this, raw
+        # Euclidean distance lets whichever channel happens to span the
+        # widest range in degrees dominate "closeness" almost entirely.
+        # Checked against the actual calibration set: elbow spans ~137
+        # degrees and tilt ~119, but pan only ~65 and yaw ~61 - unnormalized,
+        # a pose that's badly wrong on pan/yaw but close on tilt/elbow could
+        # still be picked as the nearest neighbor, which is exactly the
+        # "works for some poses, not others" symptom reported after testing.
+        # Dividing each channel's difference by its own observed range
+        # before squaring makes all 4 channels contribute comparably.
+        cols = list(zip(*(mp_vec for _, mp_vec, _ in positions))) if positions else []
+        self.scale = tuple(max(max(c) - min(c), 1.0) for c in cols) if cols else (1.0,) * 4
+
     def interpolate(self, query):
         """query: (pan, tilt, yaw, elbow) raw values.
         Returns ((pan, tilt, yaw, elbow) servo floats, [(name, weight, distance), ...])."""
         scored = []
         for name, mp_vec, servo_vec in self.positions:
-            dist = math.sqrt(sum((q - m) ** 2 for q, m in zip(query, mp_vec)))
+            dist = math.sqrt(sum(
+                ((q - m) / s) ** 2 for q, m, s in zip(query, mp_vec, self.scale)
+            ))
             scored.append((dist, name, servo_vec))
         scored.sort(key=lambda item: item[0])
         nearest = scored[: self.k]
 
-        # Sitting (near) exactly on a calibrated point - use it directly
-        # rather than dividing by a near-zero distance.
-        if nearest[0][0] < 1e-6:
+        # Sitting (near) exactly on a calibrated point, or just close enough
+        # (SNAP_DISTANCE) to call it that position - use it directly rather
+        # than blending in farther neighbors (or dividing by a near-zero
+        # distance).
+        if nearest[0][0] < SNAP_DISTANCE:
             dist, name, servo_vec = nearest[0]
             return servo_vec, [(name, 1.0, dist)]
 
@@ -177,6 +216,28 @@ class InterpolationMapper:
             used.append((name, w, dist))
 
         return tuple(blended), used
+
+
+def apply_output_filter(filt, t, value, snapped):
+    """Runs value through the OneEuroFilter, EXCEPT when snapped=True (we
+    landed on a single calibration point via SNAP_DISTANCE, not a blend) -
+    in that case the value is already a confident, verified match, not
+    something that needs smoothing, so it's passed straight through. The
+    filter's internal memory is force-set to that value/time instead of
+    left stale, so if the next frame un-snaps back into a blend, smoothing
+    resumes from the real last position instead of jumping from wherever
+    the filter's history happened to be when the snap started. Without
+    this, a perfect snap to a calibrated pose (e.g. HAND_OUT_CENTER's
+    yaw=0) would still crawl toward the target over many frames instead of
+    just being it - the filter can't tell "confident snap" apart from
+    "noisy blend" on its own, since both just look like "a value changed."
+    """
+    if snapped:
+        filt.x_prev = value
+        filt.dx_prev = 0.0
+        filt.t_prev = t
+        return value
+    return filt(t, value)
 
 
 def apply_safety_limits(servo_vec):
@@ -348,19 +409,26 @@ def main():
 
         # Smooth the interpolated output itself (see OUTPUT_MIN_CUTOFF/BETA
         # above) - this is what damps the jump when the nearest-neighbor
-        # set changes, which raw-signal smoothing alone can't reach.
-        pan_f = out_pan_filter(frame_time, pan_f)
-        tilt_f = out_tilt_filter(frame_time, tilt_f)
-        yaw_f = out_yaw_filter(frame_time, yaw_f)
-        elbow_f = out_elbow_filter(frame_time, elbow_f)
+        # set changes, which raw-signal smoothing alone can't reach. BUT
+        # skip it entirely when snapped (len(used)==1, see SNAP_DISTANCE) -
+        # that value is already a confident, verified calibration match,
+        # not noise to smooth away (see apply_output_filter()).
+        snapped = len(used) == 1
+        pan_f = apply_output_filter(out_pan_filter, frame_time, pan_f, snapped)
+        tilt_f = apply_output_filter(out_tilt_filter, frame_time, tilt_f, snapped)
+        yaw_f = apply_output_filter(out_yaw_filter, frame_time, yaw_f, snapped)
+        elbow_f = apply_output_filter(out_elbow_filter, frame_time, elbow_f, snapped)
 
         pan, tilt, yaw, elbow_out = int(pan_f), int(tilt_f), int(yaw_f), int(elbow_f)
 
         side_label = "A" if tracked_side is track.SIDE_A else "B"
-        neighbors_str = " ".join(f"{name}(w={w:.2f},d={d:.1f})" for name, w, d in used)
+        neighbors_str = " ".join(f"{name}(w={w:.2f},d={d:.2f})" for name, w, d in used)
+        nearest_dist = used[0][2] if used else float("inf")
+        low_confidence = nearest_dist > LOW_CONFIDENCE_DISTANCE
+        confidence_flag = " [LOW CONFIDENCE - no nearby calibration point]" if low_confidence else ""
         print(
             f"[side {side_label}] raw=[{smooth_pan:6.1f},{smooth_tilt:6.1f},{smooth_yaw:6.1f},{smooth_elbow:6.1f}] "
-            f"-> {neighbors_str} -> servo: pan={pan:3d} tilt={tilt:3d} yaw={yaw:3d} elbow={elbow_out:3d}"
+            f"-> {neighbors_str} -> servo: pan={pan:3d} tilt={tilt:3d} yaw={yaw:3d} elbow={elbow_out:3d}{confidence_flag}"
         )
 
         current = {"pan": pan, "tilt": tilt, "yaw": yaw, "elbow": elbow_out}
@@ -384,6 +452,11 @@ def main():
             f"[{side_label}] pan:{pan} tilt:{tilt} yaw:{yaw} elbow:{elbow_out}  near:{nearest_name}",
             (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 0), 2,
         )
+        if low_confidence:
+            cv2.putText(
+                frame, "LOW CONFIDENCE - no nearby calibration point", (10, 55),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 140, 255), 2,
+            )
 
         cv2.imshow("Boxing Robot Arm - Interpolation Mode", frame)
         if cv2.waitKey(1) & 0xFF == ord("q"):

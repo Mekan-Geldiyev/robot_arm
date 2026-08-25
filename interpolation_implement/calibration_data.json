@@ -1,12 +1,16 @@
 {
+  "_removed": {
+    "ELBOW_BENT_REST": "Removed 2026-08-23 - its raw signature (near-straight elbow, arm hanging back, ~164,-86,0,180) is generic enough that it was absorbing unrelated poses (confirmed: a live 'hand forward low' reading snapped to it at d=0.06). Its own servo value was already an acknowledged compromise (pan/tilt hit a mechanical hard-stop before reaching the true guard position). Don't re-add until that hard-stop is fixed (360-degree servo or reworked mount) and a real guard pose can be captured."
+  },
   "calibration_positions": {
     "HAND_OUT_CENTER": {
       "mediapipe": [168, -12, 0, 180],
       "servo": [0, 90, 0, 90]
     },
     "HAND_DOWN": {
-      "mediapipe": [146, -82, -27, 106],
-      "servo": [0, 180, 90, 90]
+      "mediapipe": [177, -83, -19, 115],
+      "servo": [0, 180, 90, 90],
+      "note": "Elbow raw is 115, not near the ~180 a fully-straight hanging arm should read - recorded twice (106, then 115), both far short of straight. Likely the same small-real-depth-difference weakness in MediaPipe's z as the front/behind-torso ambiguity, not a capture mistake - don't expect this to hit 180 no matter how carefully it's re-recorded."
     },
     "HAND_LEFT_UP": {
       "mediapipe": [128, 21, -61, 155],
@@ -25,20 +29,18 @@
       "servo": [0, 50, 30, 90]
     },
     "BOXING_JAB": {
-      "mediapipe": [150, 1, -55, 50],
-      "servo": [0, 90, 0, 90]
+      "mediapipe": [153, -63, -15, 170],
+      "servo": [0, 90, 0, 90],
+      "note": "Re-recorded twice (first attempt was [150,1,-55,50] - wildly different, especially elbow 50 vs 170, confirming the pose itself is hard for MediaPipe to read stably here). Servo value not re-verified this round, carried over from before - re-check it visually if the jab still doesn't look right. User also flagged this raw reading as suspiciously close to a forward-reaching pose (HAND_FORWARD_LOW/HAND_OUT_CENTER) - may need a more deliberately distinct pose to record from."
     },
     "BOXING_HOOK_SETUP": {
-      "mediapipe": [180, 14, 0, 180],
-      "servo": [0, 90, 130, 0]
+      "mediapipe": [178, -20, 0, 180],
+      "servo": [0, 90, 130, 0],
+      "note": "Elbow raw is 180 (fully straight) on both recordings, even though this pose is hand-at-ear with the elbow clearly bent - MediaPipe's elbow-plane geometry is unreliable specifically when the wrist is close to the head/shoulder in real 3D space. Treat this entry's elbow raw as low-confidence; the servo side (re-confirmed at 0,90,130,0) is the trustworthy half."
     },
     "HAND_FORWARD_LOW": {
       "mediapipe": [161, -74, -35, 43],
       "servo": [20, 90, 0, 90]
-    },
-    "ELBOW_BENT_REST": {
-      "mediapipe": [165, -75, 0, 154],
-      "servo": [0, 180, 0, 0]
     },
     "HAND_LEFT_EXTENDED": {
       "mediapipe": [115, -2, -50, 112],
