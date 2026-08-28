@@ -72,12 +72,25 @@ IDW_POWER = 1.0
 # pan/tilt/yaw/elbow signal *before* it ever reaches the interpolator, but
 # they can't smooth the discontinuity that happens *inside* interpolation
 # when the nearest-neighbor set changes - that jump only exists after
-# interpolation, so it needs its own filter afterward. Deliberately
-# stronger (lower MIN_CUTOFF, lower BETA) than the raw-signal filters,
-# since a neighbor-set swap is a bigger disturbance than ordinary landmark
-# jitter.
+# interpolation, so it needs its own filter afterward.
+#
+# MIN_CUTOFF stays low on purpose - that's what governs smoothing while
+# nearly still, and it's untouched by the BETA change below, so holding a
+# pose should feel exactly as stable as before.
+#
+# BETA raised 0.015 -> 0.05 (2026-08-25): BETA is specifically the "how
+# fast does filtering loosen up as speed increases" knob (see the
+# OneEuroFilter docstring/comments in track.py) - the low value was making
+# even genuine fast motion crawl, not just damping neighbor-set jumps. The
+# jump-damping job is now split across SNAP_DISTANCE (bypasses this filter
+# entirely on a confident single-point match) and IDW_POWER=1.0 (spreads
+# weight more evenly so a neighbor swap moves the output less in the first
+# place) - so there's more room to let BETA react to real speed than there
+# was when this filter was the only jump-damping mechanism. If flicker
+# comes back on ambiguous (non-snapped) poses specifically, lower this
+# before touching MIN_CUTOFF.
 OUTPUT_MIN_CUTOFF = 0.2
-OUTPUT_BETA = 0.015
+OUTPUT_BETA = 0.05
 
 # Flags a frame as "low confidence" when even the SINGLE nearest calibration
 # point is this far away (in the same normalized distance units as
