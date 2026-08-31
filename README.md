@@ -1,7 +1,9 @@
 # DEMO VIDEO
 
-LINK TO DEMO: 
-![Uploading image.png…]()
+LINK TO DEMO: [
+https://www.dropbox.com/scl/fi/4ilwa5an4t0apt6fe3xol/robotic_demo.mp4?rlkey=p3htwtghstjc71deba690wt2j&st=gpqrl9y0&dl=0](url)
+<img width="1072" height="597" alt="image" src="https://github.com/user-attachments/assets/4d903c41-5627-4f7f-81ab-ef708faaa1a8" />
+
 
 
 # CONSTRAINTS
