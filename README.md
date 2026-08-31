@@ -1,14 +1,8 @@
 # DEMO VIDEO
 
+LINK TO DEMO: 
+![Uploading image.png…]()
 
-https://github.com/user-attachments/assets/cce4f40c-4758-40cc-9349-cc7943ad33ce
-
-
-https://github.com/user-attachments/assets/319376d0-66cc-408c-9ddd-63e8a96e5411
-
-
-
-https://github.com/user-attachments/assets/595ae432-8b7d-4e83-9ca2-ebd4d68a42c8
 
 # CONSTRAINTS
 Everything is built out of lego, a 3d printer would be super helpful to be able to build custom parts, and also parts that are a little bit stronger with a heavier filament.
