@@ -28,10 +28,32 @@ Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver();
 #define YAW_CHANNEL   2     // shoulder rotation - swings the elbow's hinge plane for hooks
 #define ELBOW_CHANNEL 3     // elbow flex
 
-#define BAUD_RATE     9600
+#define BAUD_RATE     115200  // raised from 9600 (2026-08-25) - must match BAUD_RATE in track.py
 
-#define STEP_SIZE     2     // degrees per smoothing step (bigger = faster, less smooth)
+#define STEP_SIZE     2     // degrees per smoothing step for ORDINARY moves (small target changes)
 #define STEP_DELAY_MS 20    // ms between smoothing steps
+// Adaptive step size (2026-08-25): STEP_SIZE alone is a single fixed speed
+// for everything, tuned gentle to protect the glued joints from ordinary
+// jitter - but that same gentleness is what makes a fast punch take ~600ms
+// to physically arrive (see the "Interpolation Math" writeup, section 4).
+// Rather than raising STEP_SIZE globally (which reintroduces jitter/shock
+// on ordinary small corrections), stepToward() below picks a bigger step
+// ONLY when the target is currently far from where the arm actually is -
+// self-gating, since ordinary jitter never gets this large regardless of
+// how STEP_SIZE itself is tuned.
+#define FAST_STEP_SIZE      7   // degrees per step once FAST_JUMP_THRESHOLD is exceeded
+#define FAST_JUMP_THRESHOLD 15  // degrees remaining - at/above this, use FAST_STEP_SIZE instead
+// FAST_STEP_SIZE=7 / STEP_DELAY_MS=20 -> 350 deg/sec during a real fast
+// move, vs. 100 deg/sec (STEP_SIZE=2) the rest of the time. Dropped from 8
+// (400 deg/sec) same day - user reported speed felt fine overall, asked
+// for "just the tiniest bit" slower, so this is a small ~12% cut, not a
+// walkback of the adaptive approach itself. 350 deg/sec is still a real,
+// meaningful jump in torque/shock on the joints - if breakage resumes,
+// lower FAST_STEP_SIZE further (try 5-6) before touching STEP_SIZE, which
+// governs the safe default the arm spends most of its time at.
+// FAST_JUMP_THRESHOLD=15 is comfortably above the ~2 degree deadband
+// track.py/track_interpolation.py already gate sends behind, so
+// ordinary held-still noise can't accidentally trigger fast mode.
 // STEP_SIZE history: 2 (original) -> 5 on 2026-08-03 (too aggressive -
 // felt jerky/overshooting) -> 3 same day. 3 deg / 15ms = ~200 deg/sec max
 // slew, still notably faster than the original 133 deg/sec without going
@@ -170,8 +192,21 @@ void parseLine(char *line) {
     } else if (strcmp(name, "elbow") == 0) {
       targetElbow = value;
     } else {
-      return; // unrecognized channel name, ignore
+      Serial.print("unrecognized channel: ");
+      Serial.println(name);
+      return;
     }
+
+    // Echo back what was actually parsed - jog commands used to be silent,
+    // which made it impossible to tell "command worked, servo is moving"
+    // apart from "nothing arrived / arrived garbled" (e.g. a baud rate
+    // mismatch between this sketch and whatever's sending). Cheap at
+    // human-typing speed; the frequent auto-sent "pan,tilt,yaw,elbow" path
+    // below deliberately does NOT get this same treatment, since printing
+    // on every ~25/sec tracking update would flood the monitor.
+    Serial.print(name);
+    Serial.print(" -> ");
+    Serial.println(value);
 
     digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
     return;
@@ -200,12 +235,15 @@ void parseLine(char *line) {
 void stepToward(int &current, int target, uint8_t channel) {
   if (current == target) return;
 
-  if (abs(target - current) <= STEP_SIZE) {
+  int remaining = abs(target - current);
+  int stepSize = (remaining >= FAST_JUMP_THRESHOLD) ? FAST_STEP_SIZE : STEP_SIZE;
+
+  if (remaining <= stepSize) {
     current = target;
   } else if (target > current) {
-    current += STEP_SIZE;
+    current += stepSize;
   } else {
-    current -= STEP_SIZE;
+    current -= stepSize;
   }
 
   moveServo(channel, current);

@@ -41,6 +41,8 @@ if _PARENT_DIR not in sys.path:
     sys.path.insert(0, _PARENT_DIR)
 
 import track  # noqa: E402  (import after sys.path setup, intentional)
+import hook_animation_test  # noqa: E402
+from hook_detector import HookDetector  # noqa: E402
 
 # ==================== TUNABLE SETTINGS ====================
 
@@ -113,6 +115,14 @@ LOW_CONFIDENCE_DISTANCE = 0.6
 # ~8% of the result toward itself. "Warm" poses should just BE that
 # position, not a 92/8 blend leaning toward it.
 SNAP_DISTANCE = 0.15
+
+# Required gap between the nearest and 2nd-nearest point before a snap is
+# allowed to fire - see the long comment in InterpolationMapper.interpolate()
+# for why this exists (closely-packed points like the HOOK_* arc can make
+# SNAP_DISTANCE alone ambiguous). Starting guess - if snapping still feels
+# flickery on closely-spaced points, raise this; if legitimate snaps stop
+# firing on well-separated points, lower it.
+SNAP_MARGIN = 0.1
 
 # ============================================================
 
@@ -213,7 +223,27 @@ class InterpolationMapper:
         # (SNAP_DISTANCE) to call it that position - use it directly rather
         # than blending in farther neighbors (or dividing by a near-zero
         # distance).
-        if nearest[0][0] < SNAP_DISTANCE:
+        #
+        # BUT only when that's unambiguous: also require a real margin over
+        # the 2nd-nearest point (SNAP_MARGIN), not just being close in an
+        # absolute sense. SNAP_DISTANCE alone worked fine when all 11 points
+        # were spread far apart - close to one meant far from the rest. Once
+        # points are deliberately packed close together to trace a smooth
+        # path (the HOOK_* arc), being close to one of them often means
+        # being fairly close to its neighbor too, and ordinary jitter can
+        # flip which one "wins" from frame to frame. Since a snap skips
+        # output smoothing entirely (that's the point - trust a confident
+        # match instantly), flipping between two snap-worthy neighbors
+        # produced a full unsmoothed jump every time - the exact "mixes the
+        # values a lot" jitter reported testing the hook. Requiring a
+        # margin means an ambiguous frame falls through to normal blending
+        # instead, which already smooths fine on its own.
+        if len(nearest) < 2:
+            margin_ok = True
+        else:
+            margin_ok = nearest[1][0] - nearest[0][0] >= SNAP_MARGIN
+
+        if nearest[0][0] < SNAP_DISTANCE and margin_ok:
             dist, name, servo_vec = nearest[0]
             return servo_vec, [(name, 1.0, dist)]
 
@@ -329,8 +359,18 @@ def main():
     tracked_side = track.SIDE_A
     start_time = time.monotonic()
 
+    # Hook detection + scripted animation - see hook_detector.py and
+    # hook_animation_test.py. While hook_start_time is not None, yaw/elbow
+    # are driven by the scripted curve instead of live interpolation; pan/
+    # tilt keep coming from the normal live pipeline the entire time either
+    # way, so only the two channels proven unstable during a real hook
+    # (yaw, elbow - see the HOOK_* notes in calibration_data.json) get
+    # overridden.
+    hook_detector = HookDetector()
+    hook_start_time = None
+
     print(f"Interpolating between {len(loader.positions)} calibration positions "
-          f"(nearest {mapper.k}, IDW power {IDW_POWER}). Press 'q' to quit.")
+          f"(nearest {mapper.k}, IDW power {IDW_POWER}). Hook detection active. Press 'q' to quit.")
 
     while True:
         ok, frame = cap.read()
@@ -370,6 +410,7 @@ def main():
         elbow = lm[tracked_side["elbow"]]
         wrist = lm[tracked_side["wrist"]]
         hip = lm[tracked_side["hip"]]
+        other_shoulder = shoulder_b if tracked_side is track.SIDE_A else shoulder_a
 
         low_confidence = (
             shoulder.visibility < track.VISIBILITY_MIN
@@ -409,6 +450,17 @@ def main():
             fade = (track.YAW_ELBOW_FADE_START - raw_elbow) / (track.YAW_ELBOW_FADE_START - track.YAW_ELBOW_FADE_END)
             raw_yaw *= track.clamp(fade, 0.0, 1.0)
 
+        # Keep feeding the detector real samples even while an animation is
+        # playing (the camera's still watching your real arm) - just don't
+        # let a detection START a second animation on top of one already
+        # running.
+        hook_result = hook_detector.update(shoulder, wrist, other_shoulder, raw_yaw, frame_time)
+        if hook_result and hook_start_time is None:
+            hook_start_time = frame_time
+            print(f"\n>>> HOOK DETECTED (speed={hook_result['speed']:.2f} "
+                  f"travel={hook_result['travel']:.2f} yaw={hook_result['yaw']:.1f}) - "
+                  f"playing animation, pan/tilt still live\n")
+
         smooth_pan = pan_filter(frame_time, raw_pan)
         smooth_tilt = tilt_filter(frame_time, raw_tilt)
         smooth_yaw = yaw_filter(frame_time, raw_yaw) if raw_yaw is not None else last_smooth_yaw
@@ -420,17 +472,35 @@ def main():
         servo_vec, used = mapper.interpolate(query)
         pan_f, tilt_f, yaw_f, elbow_f = apply_safety_limits(servo_vec)
 
+        # If a hook animation is playing, yaw/elbow come from the scripted
+        # curve instead of live interpolation - pan/tilt (already computed
+        # above from live tracking) are untouched either way. This is the
+        # hybrid: the two channels proven unstable during a real hook get a
+        # verified animation, everything else keeps mirroring you live.
+        animating = hook_start_time is not None
+        if animating:
+            elapsed_ms = (frame_time - hook_start_time) * 1000.0
+            anim_yaw, anim_elbow, finished = hook_animation_test.hook_animation_frame(elapsed_ms)
+            _, _, yaw_f, elbow_f = apply_safety_limits((pan_f, tilt_f, anim_yaw, anim_elbow))
+            if finished:
+                hook_start_time = None
+                animating = False
+                print(">>> Hook animation complete - resuming live yaw/elbow tracking")
+
         # Smooth the interpolated output itself (see OUTPUT_MIN_CUTOFF/BETA
         # above) - this is what damps the jump when the nearest-neighbor
         # set changes, which raw-signal smoothing alone can't reach. BUT
-        # skip it entirely when snapped (len(used)==1, see SNAP_DISTANCE) -
-        # that value is already a confident, verified calibration match,
-        # not noise to smooth away (see apply_output_filter()).
+        # skip it when snapped (len(used)==1, see SNAP_DISTANCE) - that
+        # value is already a confident, verified calibration match, not
+        # noise to smooth away - and skip it on yaw/elbow while animating,
+        # for the same reason: a scripted curve isn't noise either, and
+        # smoothing it would just add lag on top of carefully-tuned timing
+        # (see apply_output_filter()).
         snapped = len(used) == 1
         pan_f = apply_output_filter(out_pan_filter, frame_time, pan_f, snapped)
         tilt_f = apply_output_filter(out_tilt_filter, frame_time, tilt_f, snapped)
-        yaw_f = apply_output_filter(out_yaw_filter, frame_time, yaw_f, snapped)
-        elbow_f = apply_output_filter(out_elbow_filter, frame_time, elbow_f, snapped)
+        yaw_f = apply_output_filter(out_yaw_filter, frame_time, yaw_f, snapped or animating)
+        elbow_f = apply_output_filter(out_elbow_filter, frame_time, elbow_f, snapped or animating)
 
         pan, tilt, yaw, elbow_out = int(pan_f), int(tilt_f), int(yaw_f), int(elbow_f)
 
@@ -469,6 +539,11 @@ def main():
             cv2.putText(
                 frame, "LOW CONFIDENCE - no nearby calibration point", (10, 55),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 140, 255), 2,
+            )
+        if animating:
+            cv2.putText(
+                frame, "HOOK ANIMATION PLAYING (yaw/elbow scripted)", (10, 80),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2,
             )
 
         cv2.imshow("Boxing Robot Arm - Interpolation Mode", frame)

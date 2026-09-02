@@ -2,6 +2,33 @@
   "_removed": {
     "ELBOW_BENT_REST": "Removed 2026-08-23 - its raw signature (near-straight elbow, arm hanging back, ~164,-86,0,180) is generic enough that it was absorbing unrelated poses (confirmed: a live 'hand forward low' reading snapped to it at d=0.06). Its own servo value was already an acknowledged compromise (pan/tilt hit a mechanical hard-stop before reaching the true guard position). Don't re-add until that hard-stop is fixed (360-degree servo or reworked mount) and a real guard pose can be captured."
   },
+  "_disabled_positions_NOTE": "Entries under _disabled_positions (below) are NOT deleted, just excluded from calibration_positions so CalibrationLoader never loads them - JSON has no real comment syntax, this is the equivalent of commenting them out. Data is fully preserved; move an entry back into calibration_positions to re-enable it.",
+  "_disabled_positions": {
+    "HOOK_WINDUP": {
+      "mediapipe": [179, -85, -22, 100],
+      "servo": [0, 90, 145, 0],
+      "note": "First point along an actual hook swing (windup -> mid -> mid -> extension), captured with capture_point.py's mean/std burst tool, real arm level/straight, no angle. A second run of this same pose came back wildly different ([163,-5,0,180]) - traced to the right arm being visible in guard during that run; CROP_RIGHT_FRAC only trims the far right edge of frame, not a raised guard near center, so that run is discarded. Recapture with the right arm fully out of frame if this one ever needs revisiting.",
+      "reason_disabled": "2026-08-25 - live hook mirroring through this + HOOK_MID_1/2/EXTENSION was too unstable (see their notes - real hook elbow angles sit inside YAW_ELBOW_FADE's transition band, amplifying noise). Replaced by hook_detector.py + a scripted animation (hook_animation_test.py) for the yaw/elbow portion specifically - pan/tilt still track live. Re-enable these only if live hook interpolation is revisited."
+    },
+    "HOOK_MID_1": {
+      "mediapipe": [178, 1, -43, 155],
+      "servo": [0, 90, 85, 0],
+      "note": "std on yaw (19.3) and elbow (11.9) flagged high by capture_point.py. Root cause, not just 'hard to hold still': elbow's mean (155) sits inside YAW_ELBOW_FADE_START/END's transition band (170/150) in track.py, so small real elbow fluctuations during the dynamic swing flip the fade multiplier between ~0 and ~1, amplifying elbow noise into much bigger yaw noise. If mid-swing hook frames feel unstable live, this fade band overlapping real hook elbow angles is the first thing to revisit, not the capture technique.",
+      "reason_disabled": "2026-08-25 - see HOOK_WINDUP's reason_disabled."
+    },
+    "HOOK_MID_2": {
+      "mediapipe": [178, 3, -55, 143],
+      "servo": [0, 90, 60, 0],
+      "note": "Same fade-band variance issue as HOOK_MID_1 (yaw std 26.9, elbow std 19.5) - elbow mean 143 is also inside the 150/170 transition band. A second run of this pose ([144,-81,-98,54]) is discarded for the same right-arm-in-guard contamination reason as HOOK_WINDUP.",
+      "reason_disabled": "2026-08-25 - see HOOK_WINDUP's reason_disabled."
+    },
+    "HOOK_EXTENSION": {
+      "mediapipe": [171, -49, -52, 144],
+      "servo": [0, 90, 0, 0],
+      "note": "Servo elbow deliberately set to 0 (fully bent), not the 76 originally found by jogging - a real hook keeps the elbow bent through contact (compact fist, less moment of inertia - see the Hook Calibration writeup), and the first attempt at this pose drifted toward a straighter arm. The raw mediapipe reading (elbow 144, moderately open) still reflects that straighter arm from capture, so this entry intentionally pairs a 'moderately bent' raw signature with a 'fully bent' servo target. Also high variance on capture (yaw std 28.0, elbow std 24.3), same fade-band cause as the MID points. If live hook extension looks like it snaps too abruptly to fully-bent, re-capture this one for real with the elbow actually held fully bent, rather than trusting this override.",
+      "reason_disabled": "2026-08-25 - see HOOK_WINDUP's reason_disabled."
+    }
+  },
   "calibration_positions": {
     "HAND_OUT_CENTER": {
       "mediapipe": [168, -12, 0, 180],

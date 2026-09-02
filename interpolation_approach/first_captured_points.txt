@@ -1,0 +1,90 @@
+INFO: Created TensorFlow Lite XNNPACK delegate for CPU.
+W0000 00:00:1788220918.613434   18652 inference_feedback_manager.cc:121] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1788220918.628062    5896 inference_feedback_manager.cc:121] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+No Arduino needed - camera/tracking only. Auto-captures 10 samples every 10s - hold each pose steady as the countdown reaches 0. SPACE forces an early capture. 'q' to quit.
+W0000 00:00:1788220924.725913   14832 landmark_projection_calculator.cc:81] Using NORM_RECT without IMAGE_DIMENSIONS is only supported for the square ROI. Provide IMAGE_DIMENSIONS or use PROJECTION_MATRIX.
+Next capture in:  1.0s   waiting for a confident pose)   
+Capturing 10 samples - hold the pose...
+=== 10 samples ===
+  pan  : mean=  179.0  std= 0.18
+  tilt : mean=  -84.8  std= 0.04
+  yaw  : mean=  -22.0  std= 0.17
+  elbow: mean=  100.5  std= 0.38
+  "mediapipe": [179, -85, -22, 100],
+Next capture in:  0.7s   
+Capturing 10 samples - hold the pose...
+=== 10 samples ===
+  pan  : mean=  173.5  std= 0.08
+  tilt : mean=  -11.6  std= 0.11
+  yaw  : mean=   -0.0  std= 0.00
+  elbow: mean=  180.0  std= 0.00
+  "mediapipe": [174, -12, 0, 180],
+Next capture in:  0.6s   
+Capturing 10 samples - hold the pose...
+=== 10 samples ===
+  pan  : mean=  177.6  std= 0.11
+  tilt : mean=    0.8  std= 0.02
+  yaw  : mean=  -43.0  std=19.30  <-- HIGH VARIANCE, pose may be unstable
+  elbow: mean=  154.6  std=11.93  <-- HIGH VARIANCE, pose may be unstable
+  "mediapipe": [178, 1, -43, 155],
+Next capture in:  0.6s   
+Capturing 10 samples - hold the pose...
+=== 10 samples ===
+  pan  : mean=  178.3  std= 0.15
+  tilt : mean=    2.9  std= 0.29
+  yaw  : mean=  -55.3  std=26.93  <-- HIGH VARIANCE, pose may be unstable
+  elbow: mean=  143.1  std=19.54  <-- HIGH VARIANCE, pose may be unstable
+  "mediapipe": [178, 3, -55, 143],
+Next capture in:  0.5s   
+Capturing 10 samples - hold the pose...
+=== 10 samples ===
+  pan  : mean=  170.8  std= 1.71
+  tilt : mean=  -48.6  std= 5.79
+  yaw  : mean=  -52.2  std=27.99  <-- HIGH VARIANCE, pose may be unstable
+  elbow: mean=  144.3  std=24.31  <-- HIGH VARIANCE, pose may be unstable
+  "mediapipe": [171, -49, -52, 144],
+Next capture in:  0.5s   
+Capturing 10 samples - hold the pose...
+=== 10 samples ===
+  pan  : mean=  127.2  std=33.91  <-- HIGH VARIANCE, pose may be unstable
+  tilt : mean=   10.2  std=22.13  <-- HIGH VARIANCE, pose may be unstable
+  yaw  : mean=  -95.0  std= 2.27
+  elbow: mean=   73.8  std=18.61  <-- HIGH VARIANCE, pose may be unstable
+  "mediapipe": [127, 10, -95, 74],
+Next capture in:  0.4s   
+Capturing 10 samples - hold the pose...
+=== 10 samples ===
+  pan  : mean=  143.6  std= 0.28
+  tilt : mean=  -81.1  std= 8.02  <-- HIGH VARIANCE, pose may be unstable
+  yaw  : mean=  -97.9  std= 0.14
+  elbow: mean=   54.3  std= 4.89
+  "mediapipe": [144, -81, -98, 54],
+Next capture in:  0.4s   
+Capturing 10 samples - hold the pose...
+=== 10 samples ===
+  pan  : mean=  162.7  std= 2.06
+  tilt : mean=   -4.6  std= 0.06
+  yaw  : mean=   -0.0  std= 0.00
+  elbow: mean=  180.0  std= 0.00
+  "mediapipe": [163, -5, 0, 180],
+Next capture in:  0.4s   
+Capturing 10 samples - hold the pose...
+=== 10 samples ===
+  pan  : mean=  170.2  std= 0.86
+  tilt : mean=   -3.5  std= 0.07
+  yaw  : mean=  -56.7  std=26.02  <-- HIGH VARIANCE, pose may be unstable
+  elbow: mean=  148.4  std=13.84  <-- HIGH VARIANCE, pose may be unstable
+  "mediapipe": [170, -3, -57, 148],
+Next capture in:  0.4s   
+Capturing 10 samples - hold the pose...
+=== 10 samples ===
+  pan  : mean=  159.3  std= 1.93
+  tilt : mean=   -9.0  std= 0.06
+  yaw  : mean=  -75.2  std=19.14  <-- HIGH VARIANCE, pose may be unstable
+  elbow: mean=  136.7  std=14.30  <-- HIGH VARIANCE, pose may be unstable
+  "mediapipe": [159, -9, -75, 137],
+Next capture in:  6.4s  (waiting for a confident pose)   Traceback (most recent call last):
+  File "C:\Users\Mekan\Desktop\ROBOTICS\robot_arm\interpolation_approach\capture_point.py", line 249, in <module>
+    main()
+  File "C:\Users\Mekan\Desktop\ROBOTICS\robot_arm\interpolation_approach\capture_point.py", line 113, in main
+    ok, frame = cap.read()

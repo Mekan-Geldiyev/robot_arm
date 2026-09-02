@@ -30,7 +30,7 @@ import serial
 
 # --- Serial ---
 SERIAL_PORT = "COM3"       # <-- change this to match your Arduino's port
-BAUD_RATE = 9600           # must match Serial.begin() in robot_arm.ino
+BAUD_RATE = 115200         # must match Serial.begin() in robot_arm.ino - raised from 9600 (2026-08-25)
 
 # --- Camera ---
 CAMERA_INDEX = 0
