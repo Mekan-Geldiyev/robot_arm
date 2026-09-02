@@ -1,14 +1,10 @@
 # DEMO VIDEO
 
-
-https://github.com/user-attachments/assets/cce4f40c-4758-40cc-9349-cc7943ad33ce
-
-
-https://github.com/user-attachments/assets/319376d0-66cc-408c-9ddd-63e8a96e5411
+LINK TO DEMO: [
+https://www.dropbox.com/scl/fi/4ilwa5an4t0apt6fe3xol/robotic_demo.mp4?rlkey=p3htwtghstjc71deba690wt2j&st=gpqrl9y0&dl=0](url)
+<img width="1072" height="597" alt="image" src="https://github.com/user-attachments/assets/4d903c41-5627-4f7f-81ab-ef708faaa1a8" />
 
 
-
-https://github.com/user-attachments/assets/595ae432-8b7d-4e83-9ca2-ebd4d68a42c8
 
 # CONSTRAINTS
 Everything is built out of lego, a 3d printer would be super helpful to be able to build custom parts, and also parts that are a little bit stronger with a heavier filament.
