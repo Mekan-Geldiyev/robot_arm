@@ -63,13 +63,19 @@ HOOK_WINDOW_SEC = 0.12         # look-back window for committed travel
 HOOK_HISTORY_SEC = 0.2         # how much history to keep at all
 HOOK_COOLDOWN_SEC = 0.35       # minimum gap between fires
 
-# The new-vs-EFIGHT part: how large |raw_yaw| needs to be to call this a
-# hook specifically, not just any fast punch. Set from the calibration
-# data - HOOK_WINDUP already reads -22 by the time the swing is just
-# starting, and guard/jab-shaped poses fade toward 0 by design (see
-# YAW_ELBOW_FADE in track.py). Starting just under HOOK_WINDUP's value so
-# the swing can be caught early, not only at full extension.
-HOOK_YAW_THRESHOLD = 20.0
+# Raised 20 -> 60 (2026-08-26) from a real labeled dataset of 42 hooks +
+# 43 uppercuts (punch_dataset.py, see punch_classifier.py's git history for
+# the analysis). Turns out yaw isn't purely an elbow signal in practice -
+# rotating your torso during an uppercut (very natural to do) also
+# produces real, non-trivial yaw, and it clustered at 21-55 in the data,
+# overlapping the low end of real hooks (which ranged ~21-131, mostly
+# 70+). 60 cleanly separates all of that batch's body-rotation false
+# positives from all but the 3 weakest real hooks (which fall back to
+# unclassified "punch" instead of a confidently WRONG "hook" - a safer
+# failure). Not a perfect boundary (some overlap is real, not a tuning
+# artifact) - re-check against fresh data if hooks/uppercuts feel
+# misclassified again after further testing.
+HOOK_YAW_THRESHOLD = 60.0
 
 # ============================================================
 

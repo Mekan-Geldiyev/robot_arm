@@ -42,7 +42,7 @@ if _PARENT_DIR not in sys.path:
 
 import track  # noqa: E402  (import after sys.path setup, intentional)
 import hook_animation_test  # noqa: E402
-from hook_detector import HookDetector  # noqa: E402
+from punch_classifier import PunchClassifier, LABEL_COLORS  # noqa: E402
 
 # ==================== TUNABLE SETTINGS ====================
 
@@ -359,18 +359,23 @@ def main():
     tracked_side = track.SIDE_A
     start_time = time.monotonic()
 
-    # Hook detection + scripted animation - see hook_detector.py and
-    # hook_animation_test.py. While hook_start_time is not None, yaw/elbow
-    # are driven by the scripted curve instead of live interpolation; pan/
-    # tilt keep coming from the normal live pipeline the entire time either
-    # way, so only the two channels proven unstable during a real hook
-    # (yaw, elbow - see the HOOK_* notes in calibration_data.json) get
-    # overridden.
-    hook_detector = HookDetector()
+    # Punch classification (hook / uppercut / unclassified punch) - see
+    # punch_classifier.py. Only "hook" triggers the scripted animation
+    # (hook_animation_test.py) right now, since that's the only animation
+    # that exists - uppercut/punch are classified and shown on screen for
+    # visibility, but don't yet DO anything different from normal live
+    # tracking. While hook_start_time is not None, yaw/elbow are driven by
+    # the scripted curve instead of live interpolation; pan/tilt keep
+    # coming from the normal live pipeline the entire time either way, so
+    # only the two channels proven unstable during a real hook (yaw, elbow
+    # - see the HOOK_* notes in calibration_data.json) get overridden.
+    punch_classifier = PunchClassifier()
     hook_start_time = None
+    punch_flash_label = ""
+    punch_flash_until = 0.0
 
     print(f"Interpolating between {len(loader.positions)} calibration positions "
-          f"(nearest {mapper.k}, IDW power {IDW_POWER}). Hook detection active. Press 'q' to quit.")
+          f"(nearest {mapper.k}, IDW power {IDW_POWER}). Punch classification active. Press 'q' to quit.")
 
     while True:
         ok, frame = cap.read()
@@ -450,16 +455,20 @@ def main():
             fade = (track.YAW_ELBOW_FADE_START - raw_elbow) / (track.YAW_ELBOW_FADE_START - track.YAW_ELBOW_FADE_END)
             raw_yaw *= track.clamp(fade, 0.0, 1.0)
 
-        # Keep feeding the detector real samples even while an animation is
-        # playing (the camera's still watching your real arm) - just don't
-        # let a detection START a second animation on top of one already
-        # running.
-        hook_result = hook_detector.update(shoulder, wrist, other_shoulder, raw_yaw, frame_time)
-        if hook_result and hook_start_time is None:
-            hook_start_time = frame_time
-            print(f"\n>>> HOOK DETECTED (speed={hook_result['speed']:.2f} "
-                  f"travel={hook_result['travel']:.2f} yaw={hook_result['yaw']:.1f}) - "
-                  f"playing animation, pan/tilt still live\n")
+        # Keep feeding the classifier real samples even while an animation
+        # is playing (the camera's still watching your real arm) - just
+        # don't let a detection START a second animation on top of one
+        # already running.
+        punch_result = punch_classifier.update(shoulder, wrist, other_shoulder, raw_yaw, frame_time)
+        if punch_result:
+            punch_flash_label = punch_result["type"].upper()
+            punch_flash_until = frame_time + 1.0
+            yaw_str = f"{punch_result['yaw']:.1f}" if punch_result["yaw"] is not None else "n/a"
+            print(f"\n>>> {punch_flash_label} (speed={punch_result['speed']:.2f} "
+                  f"travel={punch_result['travel']:.2f} yaw={yaw_str})")
+            if punch_result["type"] == "hook" and hook_start_time is None:
+                hook_start_time = frame_time
+                print(">>> Playing hook animation, pan/tilt still live\n")
 
         smooth_pan = pan_filter(frame_time, raw_pan)
         smooth_tilt = tilt_filter(frame_time, raw_tilt)
@@ -545,6 +554,26 @@ def main():
                 frame, "HOOK ANIMATION PLAYING (yaw/elbow scripted)", (10, 80),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2,
             )
+
+        # Punch classification banner - same color/size treatment as
+        # punch_classifier.py's standalone test, so it reads the same way
+        # here: a full-width color banner is hard to miss mid-swing,
+        # unlike small corner text. Briefly covers the [side A] status line
+        # above while it's up (~1s) - acceptable, the banner is the more
+        # important thing to see in that moment.
+        if frame_time < punch_flash_until:
+            color = LABEL_COLORS.get(punch_flash_label, LABEL_COLORS["PUNCH"])
+            frame_h, frame_w = frame.shape[:2]
+            (text_w, text_h), baseline = cv2.getTextSize(
+                punch_flash_label, cv2.FONT_HERSHEY_SIMPLEX, 1.8, 4
+            )
+            banner_h = text_h + baseline + 30
+            cv2.rectangle(frame, (0, 0), (frame_w, banner_h), color, -1)
+            text_x = (frame_w - text_w) // 2
+            text_y = banner_h - baseline - 15
+            text_color = (255, 255, 255) if color != (0, 165, 255) else (0, 0, 0)
+            cv2.putText(frame, punch_flash_label, (text_x, text_y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.8, text_color, 4)
 
         cv2.imshow("Boxing Robot Arm - Interpolation Mode", frame)
         if cv2.waitKey(1) & 0xFF == ord("q"):

@@ -1,0 +1,88 @@
+W0000 00:00:1788455699.116821    8632 landmark_projection_calculator.cc:81] Using NORM_RECT without IMAGE_DIMENSIONS is only supported for the square ROI. Provide IMAGE_DIMENSIONS or use PROJECTION_MATRIX.
+Mode: HOOK - throw real hooks
+[HOOK #1 recorded (guessed uppercut)] speed=6.11 travel=0.44 dx=-0.17 dy=-0.41 dtilt=+25.5 yaw=-0.0
+[HOOK #2 recorded] speed=12.01 travel=0.55 dx=+0.36 dy=-0.42 dtilt=+25.3 yaw=49.21493529473311
+[HOOK #3 recorded] speed=11.24 travel=0.41 dx=-0.08 dy=+0.40 dtilt=-50.0 yaw=58.2425849319755
+[HOOK #4 recorded] speed=8.91 travel=0.55 dx=+0.30 dy=-0.46 dtilt=+26.0 yaw=-76.56883865704532
+[HOOK #5 recorded] speed=10.11 travel=0.41 dx=+0.01 dy=+0.41 dtilt=-54.5 yaw=-34.284139625388924
+[HOOK #6 recorded] speed=13.87 travel=0.69 dx=+0.38 dy=-0.58 dtilt=+36.9 yaw=-85.07549298388555
+[HOOK #7 recorded (guessed uppercut)] speed=6.68 travel=0.46 dx=-0.17 dy=-0.43 dtilt=+26.7 yaw=-0.0
+[HOOK #8 recorded] speed=10.44 travel=0.62 dx=+0.49 dy=-0.38 dtilt=+9.3 yaw=-93.40611456579855
+[HOOK #9 recorded] speed=21.67 travel=0.90 dx=+0.85 dy=-0.30 dtilt=-40.9 yaw=-96.55706179027918
+[HOOK #10 recorded] speed=19.44 travel=0.70 dx=+0.59 dy=-0.37 dtilt=-2.5 yaw=-97.8404079422113
+[HOOK #11 recorded] speed=6.50 travel=0.69 dx=-0.69 dy=-0.09 dtilt=-27.2 yaw=-0.0
+[HOOK #12 recorded] speed=14.06 travel=0.50 dx=+0.27 dy=-0.42 dtilt=+23.2 yaw=-90.68488437784266
+[HOOK #13 recorded (guessed punch)] speed=6.05 travel=0.45 dx=-0.31 dy=-0.33 dtilt=+28.9 yaw=-0.0
+[HOOK #14 recorded] speed=12.83 travel=0.70 dx=-0.70 dy=+0.00 dtilt=-67.3 yaw=-81.91555379540078
+[HOOK #15 recorded] speed=9.97 travel=0.50 dx=+0.17 dy=-0.47 dtilt=+27.6 yaw=-73.70463101951297
+[HOOK #16 recorded] speed=6.22 travel=0.66 dx=-0.66 dy=-0.04 dtilt=-51.9 yaw=-76.99558748195405
+[HOOK #17 recorded] speed=20.98 travel=0.85 dx=+0.63 dy=-0.41 dtilt=-35.1 yaw=-99.55208000646911
+[HOOK #18 recorded] speed=11.19 travel=0.45 dx=-0.07 dy=+0.45 dtilt=-60.2 yaw=-39.44091957482218
+[HOOK #19 recorded] speed=15.38 travel=1.80 dx=+1.79 dy=-0.21 dtilt=+10.7 yaw=-104.65854979642293
+[HOOK #20 recorded] speed=11.60 travel=0.73 dx=-0.72 dy=+0.12 dtilt=+20.0 yaw=-131.22049273998846
+[HOOK #21 recorded] speed=11.46 travel=0.79 dx=-0.78 dy=-0.11 dtilt=-53.1 yaw=-80.12048358801911
+[HOOK #22 recorded (guessed uppercut)] speed=8.97 travel=0.43 dx=-0.15 dy=-0.40 dtilt=+26.3 yaw=-0.0
+[HOOK #23 recorded] speed=10.26 travel=0.62 dx=-0.59 dy=-0.19 dtilt=-35.6 yaw=-0.0
+[HOOK #24 recorded] speed=9.05 travel=0.58 dx=+0.21 dy=-0.53 dtilt=+19.1 yaw=-102.59211708396712
+[HOOK #25 recorded] speed=7.48 travel=0.52 dx=-0.46 dy=-0.23 dtilt=+10.4 yaw=-69.25052309235318
+[HOOK #26 recorded] speed=14.16 travel=0.44 dx=+0.28 dy=-0.21 dtilt=-5.5 yaw=-104.56953590623614
+[HOOK #27 recorded] speed=7.30 travel=1.04 dx=-0.89 dy=-0.53 dtilt=-1.8 yaw=-80.37670835355625
+[HOOK #28 recorded] speed=9.87 travel=0.43 dx=-0.38 dy=-0.20 dtilt=+22.5 yaw=-111.72372663371554
+[HOOK #29 recorded] speed=13.65 travel=0.57 dx=+0.41 dy=-0.33 dtilt=-18.4 yaw=-101.4305500809908
+[HOOK #30 recorded] speed=6.04 travel=0.80 dx=-0.74 dy=-0.30 dtilt=-6.5 yaw=-75.3195841833003
+[HOOK #31 recorded] speed=7.84 travel=0.51 dx=-0.51 dy=-0.03 dtilt=+43.0 yaw=-0.0
+[HOOK #32 recorded] speed=10.58 travel=0.50 dx=-0.49 dy=+0.05 dtilt=-19.9 yaw=-99.6417735826791
+[HOOK #33 recorded] speed=16.06 travel=0.50 dx=+0.47 dy=-0.15 dtilt=-22.9 yaw=-99.41011197067834
+[HOOK #34 recorded (guessed punch)] speed=8.75 travel=0.64 dx=-0.49 dy=-0.41 dtilt=+7.5 yaw=-0.0
+[HOOK #35 recorded] speed=8.27 travel=0.58 dx=-0.55 dy=+0.18 dtilt=+22.0 yaw=-112.66326211895468
+[HOOK #36 recorded] speed=13.45 travel=0.69 dx=-0.69 dy=+0.04 dtilt=-29.7 yaw=-103.81179808643051
+[HOOK #37 recorded] speed=7.96 travel=0.44 dx=-0.41 dy=-0.16 dtilt=+18.1 yaw=-0.0
+[HOOK #38 recorded] speed=7.09 travel=0.53 dx=-0.53 dy=-0.02 dtilt=-23.4 yaw=-21.485384246920983
+[HOOK #39 recorded] speed=8.51 travel=0.46 dx=-0.43 dy=+0.18 dtilt=+12.6 yaw=-99.16170253898488
+[HOOK #40 recorded] speed=9.89 travel=0.67 dx=-0.63 dy=+0.23 dtilt=-12.9 yaw=-98.31268436658424
+[HOOK #41 recorded] speed=15.15 travel=0.47 dx=+0.27 dy=-0.16 dtilt=-8.0 yaw=-107.5273530797561
+[HOOK #42 recorded] speed=11.15 travel=1.02 dx=-0.86 dy=+0.54 dtilt=-34.0 yaw=-94.810994635452
+Mode: UPPERCUT - throw real uppercuts
+[UPPERCUT #1 recorded (guessed hook)] speed=9.01 travel=0.53 dx=+0.36 dy=-0.38 dtilt=+36.4 yaw=-43.249403431524534
+[UPPERCUT #2 recorded (guessed hook)] speed=12.97 travel=0.43 dx=+0.28 dy=-0.32 dtilt=+31.7 yaw=-21.484343360979747
+[UPPERCUT #3 recorded (guessed hook)] speed=6.25 travel=0.66 dx=-0.25 dy=+0.61 dtilt=-52.0 yaw=-48.025630884536426
+[UPPERCUT #4 recorded (guessed punch)] speed=8.93 travel=0.50 dx=+0.35 dy=-0.36 dtilt=+41.7 yaw=-0.0
+[UPPERCUT #5 recorded (guessed punch)] speed=6.70 travel=0.47 dx=+0.32 dy=-0.35 dtilt=+33.6 yaw=-0.0
+[UPPERCUT #6 recorded (guessed hook)] speed=7.76 travel=0.44 dx=+0.32 dy=-0.31 dtilt=+33.0 yaw=-44.917245601953944
+[UPPERCUT #7 recorded] speed=13.30 travel=0.44 dx=+0.10 dy=-0.43 dtilt=+7.5 yaw=-0.0
+[UPPERCUT #8 recorded] speed=7.76 travel=0.42 dx=+0.15 dy=-0.39 dtilt=+23.3 yaw=-0.0
+[UPPERCUT #9 recorded] speed=8.93 travel=0.58 dx=+0.09 dy=-0.57 dtilt=+48.8 yaw=-0.0
+[UPPERCUT #10 recorded] speed=7.33 travel=0.43 dx=+0.25 dy=-0.35 dtilt=+23.2 yaw=-0.0
+[UPPERCUT #11 recorded (guessed hook)] speed=7.05 travel=0.94 dx=-0.24 dy=+0.91 dtilt=-77.1 yaw=-0.0
+[UPPERCUT #12 recorded] speed=9.92 travel=0.61 dx=+0.31 dy=-0.52 dtilt=+41.3 yaw=-0.0
+[UPPERCUT #13 recorded (guessed hook)] speed=8.52 travel=0.46 dx=+0.39 dy=-0.24 dtilt=+24.7 yaw=-46.93754939130138
+[UPPERCUT #14 recorded] speed=8.94 travel=0.41 dx=+0.23 dy=-0.33 dtilt=+22.3 yaw=-9.080513235261133
+[UPPERCUT #15 recorded (guessed hook)] speed=6.05 travel=0.77 dx=-0.22 dy=+0.74 dtilt=-103.1 yaw=-0.0
+[UPPERCUT #16 recorded (guessed punch)] speed=6.98 travel=0.42 dx=+0.31 dy=-0.28 dtilt=+29.7 yaw=-0.0
+[UPPERCUT #17 recorded (guessed hook)] speed=6.95 travel=0.54 dx=-0.37 dy=+0.40 dtilt=-46.0 yaw=-20.787113951430552
+[UPPERCUT #18 recorded (guessed punch)] speed=7.40 travel=0.41 dx=+0.29 dy=-0.28 dtilt=+25.1 yaw=-0.0
+[UPPERCUT #19 recorded (guessed hook)] speed=6.62 travel=0.64 dx=-0.23 dy=+0.60 dtilt=-46.9 yaw=-0.0
+[UPPERCUT #20 recorded (guessed punch)] speed=9.24 travel=0.51 dx=+0.35 dy=-0.37 dtilt=+23.4 yaw=-0.0
+[UPPERCUT #21 recorded] speed=6.90 travel=0.52 dx=+0.29 dy=-0.43 dtilt=+36.7 yaw=-0.0
+[UPPERCUT #22 recorded (guessed punch)] speed=6.50 travel=0.49 dx=+0.31 dy=-0.38 dtilt=+37.6 yaw=-0.0
+[UPPERCUT #23 recorded (guessed hook)] speed=11.14 travel=0.44 dx=-0.26 dy=+0.35 dtilt=-51.4 yaw=-0.0
+[UPPERCUT #24 recorded (guessed hook)] speed=6.99 travel=0.48 dx=+0.43 dy=-0.21 dtilt=+28.1 yaw=-23.71933839007873
+[UPPERCUT #25 recorded (guessed hook)] speed=9.78 travel=0.46 dx=+0.35 dy=-0.30 dtilt=+21.9 yaw=-42.066124665217465
+[UPPERCUT #26 recorded (guessed hook)] speed=6.34 travel=0.65 dx=-0.42 dy=+0.50 dtilt=-60.4 yaw=-0.0
+[UPPERCUT #27 recorded] speed=24.61 travel=0.79 dx=+0.04 dy=-0.75 dtilt=+60.2 yaw=-0.0
+[UPPERCUT #28 recorded] speed=36.96 travel=1.18 dx=-0.01 dy=-1.16 dtilt=+148.9 yaw=-0.0
+[UPPERCUT #29 recorded (guessed punch)] speed=10.34 travel=0.53 dx=+0.31 dy=-0.40 dtilt=+27.6 yaw=-0.0
+[UPPERCUT #30 recorded (guessed punch)] speed=10.50 travel=0.54 dx=+0.33 dy=-0.43 dtilt=+33.3 yaw=-0.0
+[UPPERCUT #31 recorded (guessed hook)] speed=9.19 travel=0.45 dx=+0.37 dy=-0.25 dtilt=+29.7 yaw=-0.0
+[UPPERCUT #32 recorded (guessed punch)] speed=8.55 travel=0.41 dx=+0.29 dy=-0.29 dtilt=+25.1 yaw=-0.0
+[UPPERCUT #33 recorded (guessed punch)] speed=7.27 travel=0.53 dx=+0.38 dy=-0.37 dtilt=+41.2 yaw=-0.0
+[UPPERCUT #34 recorded (guessed punch)] speed=8.36 travel=0.55 dx=+0.38 dy=-0.39 dtilt=+35.1 yaw=-0.0
+[UPPERCUT #35 recorded] speed=15.49 travel=0.83 dx=+0.38 dy=-0.71 dtilt=+43.6 yaw=-0.0
+[UPPERCUT #36 recorded (guessed hook)] speed=7.99 travel=0.44 dx=+0.40 dy=-0.20 dtilt=+22.2 yaw=-0.0
+[UPPERCUT #37 recorded (guessed hook)] speed=8.82 travel=0.72 dx=-0.48 dy=+0.54 dtilt=-52.0 yaw=-28.207074074601987
+[UPPERCUT #38 recorded (guessed hook)] speed=11.77 travel=0.43 dx=+0.36 dy=-0.24 dtilt=+9.8 yaw=-43.60454193930059
+[UPPERCUT #39 recorded] speed=26.65 travel=0.86 dx=-0.01 dy=-0.86 dtilt=+133.2 yaw=-0.0
+[UPPERCUT #40 recorded] speed=11.62 travel=0.46 dx=+0.13 dy=-0.44 dtilt=+19.0 yaw=-0.0
+[UPPERCUT #41 recorded (guessed hook)] speed=10.30 travel=1.06 dx=-0.12 dy=+1.06 dtilt=-113.9 yaw=-0.0
+[UPPERCUT #42 recorded (guessed hook)] speed=9.54 travel=0.51 dx=+0.30 dy=-0.42 dtilt=+32.8 yaw=-55.26811025108516
+[UPPERCUT #43 recorded] speed=10.05 travel=0.57 dx=+0.31 dy=-0.47 dtilt=+29.1 yaw=-0.0
