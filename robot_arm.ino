@@ -41,16 +41,21 @@ Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver();
 // ONLY when the target is currently far from where the arm actually is -
 // self-gating, since ordinary jitter never gets this large regardless of
 // how STEP_SIZE itself is tuned.
-#define FAST_STEP_SIZE      7   // degrees per step once FAST_JUMP_THRESHOLD is exceeded
+#define FAST_STEP_SIZE      9   // degrees per step once FAST_JUMP_THRESHOLD is exceeded
 #define FAST_JUMP_THRESHOLD 15  // degrees remaining - at/above this, use FAST_STEP_SIZE instead
-// FAST_STEP_SIZE=7 / STEP_DELAY_MS=20 -> 350 deg/sec during a real fast
-// move, vs. 100 deg/sec (STEP_SIZE=2) the rest of the time. Dropped from 8
-// (400 deg/sec) same day - user reported speed felt fine overall, asked
-// for "just the tiniest bit" slower, so this is a small ~12% cut, not a
-// walkback of the adaptive approach itself. 350 deg/sec is still a real,
-// meaningful jump in torque/shock on the joints - if breakage resumes,
-// lower FAST_STEP_SIZE further (try 5-6) before touching STEP_SIZE, which
-// governs the safe default the arm spends most of its time at.
+// FAST_STEP_SIZE=9 / STEP_DELAY_MS=20 -> 450 deg/sec during a real fast
+// move, vs. 100 deg/sec (STEP_SIZE=2) the rest of the time. Raised 7->9
+// (2026-08-26) specifically because the hook animation's software curve
+// (STRIKE_SPEED_DEG_PER_SEC in hook_animation_test.py) was already asking
+// for 400+ deg/sec while this cap held it to 350 - the servo was
+// physically trailing behind the already-eased software curve, adding lag
+// on top of lag. NOTE: this is a SHARED, global cap (any big/fast jump on
+// any channel uses it, not just hook animations) - there's no per-source
+// speed override yet, so this also speeds up any other large live-tracking
+// jump the same way. 450 deg/sec is a real, meaningful jump in torque/
+// shock on the joints - if breakage resumes, lower this back down (try
+// 7-8) before touching STEP_SIZE, which governs the safe default the arm
+// spends most of its time at.
 // FAST_JUMP_THRESHOLD=15 is comfortably above the ~2 degree deadband
 // track.py/track_interpolation.py already gate sends behind, so
 // ordinary held-still noise can't accidentally trigger fast mode.

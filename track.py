@@ -269,10 +269,14 @@ YAW_SERVO_OFFSET = 0  # degrees added to the mapped yaw output - PLACEHOLDER, se
 # "hella bad" - binds/strains against the mount) - a proper reglue for
 # full range of motion is planned but hasn't happened yet. Until then,
 # never let the commanded yaw servo value go below this, no matter what
-# raw_yaw/mapping/offset computed - 40 is a value the user confirmed looks
-# and feels fine on the current glue job. Remove this floor (or set it back
-# to 0) once the mount is rebuilt for full range.
-YAW_SAFE_FLOOR = 40
+# raw_yaw/mapping/offset computed.
+# Lowered 40 -> 30 -> 20 (both 2026-08-26): each time, the hook
+# animation's STRIKE_END_YAW was tested standalone via
+# hook_animation_test.py (no floor in that script) and confirmed not
+# straining BEFORE this floor was dropped to match - don't lower this
+# again without doing that same standalone check first. Remove this floor
+# entirely once the mount is rebuilt for full range.
+YAW_SAFE_FLOOR = 20
 
 # EMA smoothing factor for the L1/L2 arm-segment-length estimates used by
 # the elbow IK below. Very slow on purpose (0.01 = ~99% history) - segment

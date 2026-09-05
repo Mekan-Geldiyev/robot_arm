@@ -371,6 +371,8 @@ def main():
     # - see the HOOK_* notes in calibration_data.json) get overridden.
     punch_classifier = PunchClassifier()
     hook_start_time = None
+    hook_start_yaw = None  # yaw's ACTUAL value at the moment a hook was detected -
+                            # the strike animates from here, not a fixed guard pose
     punch_flash_label = ""
     punch_flash_until = 0.0
 
@@ -460,6 +462,7 @@ def main():
         # don't let a detection START a second animation on top of one
         # already running.
         punch_result = punch_classifier.update(shoulder, wrist, other_shoulder, raw_yaw, frame_time)
+        start_hook_this_frame = False
         if punch_result:
             punch_flash_label = punch_result["type"].upper()
             punch_flash_until = frame_time + 1.0
@@ -467,8 +470,13 @@ def main():
             print(f"\n>>> {punch_flash_label} (speed={punch_result['speed']:.2f} "
                   f"travel={punch_result['travel']:.2f} yaw={yaw_str})")
             if punch_result["type"] == "hook" and hook_start_time is None:
-                hook_start_time = frame_time
-                print(">>> Playing hook animation, pan/tilt still live\n")
+                # Don't grab a starting yaw here - this frame's live yaw_f
+                # hasn't been computed yet (that happens below). Just flag
+                # it; the actual hook_start_time/hook_start_yaw capture
+                # happens right after yaw_f exists, so the strike starts
+                # from THIS frame's real tracked position, not a stale or
+                # missing one.
+                start_hook_this_frame = True
 
         smooth_pan = pan_filter(frame_time, raw_pan)
         smooth_tilt = tilt_filter(frame_time, raw_tilt)
@@ -481,6 +489,11 @@ def main():
         servo_vec, used = mapper.interpolate(query)
         pan_f, tilt_f, yaw_f, elbow_f = apply_safety_limits(servo_vec)
 
+        if start_hook_this_frame:
+            hook_start_time = frame_time
+            hook_start_yaw = yaw_f  # wherever live tracking actually has yaw right now
+            print(">>> Playing hook animation, pan/tilt still live\n")
+
         # If a hook animation is playing, yaw/elbow come from the scripted
         # curve instead of live interpolation - pan/tilt (already computed
         # above from live tracking) are untouched either way. This is the
@@ -489,7 +502,7 @@ def main():
         animating = hook_start_time is not None
         if animating:
             elapsed_ms = (frame_time - hook_start_time) * 1000.0
-            anim_yaw, anim_elbow, finished = hook_animation_test.hook_animation_frame(elapsed_ms)
+            anim_yaw, anim_elbow, finished = hook_animation_test.hook_animation_frame(elapsed_ms, start_yaw=hook_start_yaw)
             _, _, yaw_f, elbow_f = apply_safety_limits((pan_f, tilt_f, anim_yaw, anim_elbow))
             if finished:
                 hook_start_time = None

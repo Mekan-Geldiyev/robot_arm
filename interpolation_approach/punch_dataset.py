@@ -16,11 +16,19 @@ is the current guess already right" check alongside the raw data.
 Controls:
     h        - switch to HOOK labeling mode
     u        - switch to UPPERCUT labeling mode
+    n        - switch to NONE mode (ordinary, non-punch movement - e.g. the
+               HAND_DOWN-to-side-out transition that was triggering false
+               "HOOK" calls) - anything the classifier fires on here is by
+               definition a false positive, since you're not punching
     s        - save the dataset to CSV right now (also auto-saves on quit)
     q        - quit (auto-saves)
 
 Throw ~40 of each (or however many) while in the matching mode, then hand
-the resulting punch_dataset.csv back for analysis.
+the resulting punch_dataset.csv back for analysis. For 'n' mode
+specifically: do the actual movements that were triggering false
+positives (arm transitions between rest poses, reaching, etc), not random
+motion - the point is to capture what THOSE specific movements look like
+in feature space.
 
 Run:  python punch_dataset.py
 """
@@ -86,11 +94,11 @@ def main():
 
     label = None
     rows = []
-    counts = {"hook": 0, "uppercut": 0}
+    counts = {"hook": 0, "uppercut": 0, "none": 0}
     flash_text = ""
     flash_until = 0.0
 
-    print("Press 'h' for HOOK mode or 'u' for UPPERCUT mode before throwing. 's' saves, 'q' quits+saves.")
+    print("Press 'h' HOOK, 'u' UPPERCUT, or 'n' NONE (ordinary movement) before doing anything. 's' saves, 'q' quits+saves.")
 
     while True:
         ok, frame = cap.read()
@@ -161,8 +169,15 @@ def main():
                     })
                     counts[label] = counts.get(label, 0) + 1
                     match = result["type"] == label
-                    flash_text = f"{label.upper()} #{counts[label]} recorded" + ("" if match else f" (guessed {result['type']})")
-                    flash_color = (0, 200, 0) if match else (0, 140, 255)
+                    if label == "none":
+                        # There's no "none" classifier output - any result
+                        # here is by definition a false positive, not a
+                        # "wrong guess between punch types".
+                        flash_text = f"NONE #{counts[label]} - FALSE POSITIVE: called {result['type'].upper()}"
+                        flash_color = (0, 0, 255)
+                    else:
+                        flash_text = f"{label.upper()} #{counts[label]} recorded" + ("" if match else f" (guessed {result['type']})")
+                        flash_color = (0, 200, 0) if match else (0, 140, 255)
                     print(
                         f"[{flash_text}] speed={result['speed']:.2f} travel={result['travel']:.2f} "
                         f"dx={result['dx']:+.2f} dy={result['dy']:+.2f} dtilt={result['dtilt']:+.1f} yaw={result['yaw']}"
@@ -172,13 +187,13 @@ def main():
             cv2.putText(frame, "No pose detected", (10, 30),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
 
-        mode_str = label.upper() if label else "NO LABEL - press h/u"
+        mode_str = label.upper() if label else "NO LABEL - press h/u/n"
         cv2.putText(frame, f"MODE: {mode_str}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2)
-        cv2.putText(frame, f"hooks: {counts['hook']}   uppercuts: {counts['uppercut']}",
+        cv2.putText(frame, f"hooks: {counts['hook']}   uppercuts: {counts['uppercut']}   none: {counts['none']}",
                     (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
         if frame_time < flash_until:
             cv2.putText(frame, flash_text, (10, 95), cv2.FONT_HERSHEY_SIMPLEX, 0.8, flash_color, 2)
-        cv2.putText(frame, "h=hook  u=uppercut  s=save  q=quit", (10, frame.shape[0] - 15),
+        cv2.putText(frame, "h=hook  u=uppercut  n=none  s=save  q=quit", (10, frame.shape[0] - 15),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200, 200, 200), 1)
 
         cv2.imshow("Punch Dataset Collector", frame)
@@ -191,6 +206,9 @@ def main():
         elif key == ord("u"):
             label = "uppercut"
             print("Mode: UPPERCUT - throw real uppercuts")
+        elif key == ord("n"):
+            label = "none"
+            print("Mode: NONE - do the ordinary movements that were triggering false positives (not punches)")
         elif key == ord("s"):
             save_csv(rows)
             print(f"Saved {len(rows)} rows to {OUTPUT_CSV}")
