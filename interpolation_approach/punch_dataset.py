@@ -46,7 +46,7 @@ import track  # noqa: E402
 from punch_classifier import PunchClassifier  # noqa: E402
 
 OUTPUT_CSV = os.path.join(os.path.dirname(os.path.abspath(__file__)), "punch_dataset.csv")
-FIELDNAMES = ["label", "predicted", "speed", "travel", "dx", "dy", "dtilt", "yaw"]
+FIELDNAMES = ["label", "predicted", "speed", "travel", "dx", "dy", "dtilt", "yaw", "elbow"]
 
 
 def save_csv(rows):
@@ -135,6 +135,7 @@ def main():
 
             elbow_visible = elbow.visibility >= track.VISIBILITY_MIN
             raw_yaw = None
+            raw_elbow = None
             if elbow_visible:
                 hip = lm[tracked_side["hip"]]
                 l1_frame = track.landmark_distance(shoulder, elbow, keys=("x", "y", "z"))
@@ -151,11 +152,11 @@ def main():
                     fade = (track.YAW_ELBOW_FADE_START - raw_elbow) / (track.YAW_ELBOW_FADE_START - track.YAW_ELBOW_FADE_END)
                     raw_yaw *= track.clamp(fade, 0.0, 1.0)
 
-            result = classifier.update(shoulder, wrist, other_shoulder, raw_yaw, frame_time)
+            result = classifier.update(shoulder, wrist, other_shoulder, raw_yaw, raw_elbow, frame_time)
             if result:
                 if label is None:
-                    print("No label selected - press 'h' or 'u' first. Discarded this one.")
-                    flash_text, flash_color = "NO LABEL SET - press h or u", (0, 0, 255)
+                    print("No label selected - press 'h', 'u', or 'n' first. Discarded this one.")
+                    flash_text, flash_color = "NO LABEL SET - press h/u/n", (0, 0, 255)
                 else:
                     rows.append({
                         "label": label,
@@ -166,6 +167,7 @@ def main():
                         "dy": result["dy"],
                         "dtilt": result["dtilt"],
                         "yaw": result["yaw"] if result["yaw"] is not None else "",
+                        "elbow": result["elbow"] if result["elbow"] is not None else "",
                     })
                     counts[label] = counts.get(label, 0) + 1
                     match = result["type"] == label
@@ -180,7 +182,8 @@ def main():
                         flash_color = (0, 200, 0) if match else (0, 140, 255)
                     print(
                         f"[{flash_text}] speed={result['speed']:.2f} travel={result['travel']:.2f} "
-                        f"dx={result['dx']:+.2f} dy={result['dy']:+.2f} dtilt={result['dtilt']:+.1f} yaw={result['yaw']}"
+                        f"dx={result['dx']:+.2f} dy={result['dy']:+.2f} dtilt={result['dtilt']:+.1f} "
+                        f"yaw={result['yaw']} elbow={result['elbow']}"
                     )
                 flash_until = frame_time + 1.2
         else:

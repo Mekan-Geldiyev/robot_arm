@@ -461,7 +461,7 @@ def main():
         # is playing (the camera's still watching your real arm) - just
         # don't let a detection START a second animation on top of one
         # already running.
-        punch_result = punch_classifier.update(shoulder, wrist, other_shoulder, raw_yaw, frame_time)
+        punch_result = punch_classifier.update(shoulder, wrist, other_shoulder, raw_yaw, raw_elbow, frame_time)
         start_hook_this_frame = False
         if punch_result:
             punch_flash_label = punch_result["type"].upper()

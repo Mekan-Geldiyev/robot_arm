@@ -75,6 +75,20 @@ from hook_detector import (  # noqa: E402
 # guards against calling a diagonal motion confidently one or the other.
 DIRECTION_DOMINANCE_RATIO = 1.3
 
+# raw_elbow scale is ~90 (fully bent) to ~178 (fully straight) - see
+# track.elbow_ik_angle(). Below this counts as "bent enough to plausibly
+# be a hook"; at/above it, no matter what yaw or the 2D motion says, it's
+# not a hook. Set from the HOOK_* calibration data (real hooks measured
+# 143-155) with headroom above that, not yet verified against a labeled
+# "elbow value during an ordinary fast reach" dataset - if false positives
+# persist, lower this first before touching yaw/direction thresholds again.
+ELBOW_BENT_THRESHOLD = 160.0
+
+# A real arm's reach is well under this many shoulder-widths - anything
+# past it is a tracking glitch (landmark jump during occlusion/dropout),
+# found via real garbage frames in the negative dataset (17.94 and 3.25).
+MAX_PLAUSIBLE_TRAVEL = 2.0
+
 # --- Standalone test display only (doesn't affect classification) ---
 FLASH_DURATION_SEC = 1.0    # how long the color banner stays up after a hit
 FLASH_FONT_SCALE = 1.8
@@ -97,18 +111,21 @@ class PunchClassifier:
         self.hist = []  # {"x", "y", "tilt", "t"} - wrist relative to shoulder
         self.last_punch_at = 0.0
 
-    def update(self, shoulder, wrist, other_shoulder, raw_yaw, now):
+    def update(self, shoulder, wrist, other_shoulder, raw_yaw, raw_elbow, now):
         """
         shoulder, wrist: raw landmarks of the currently-tracked arm.
         other_shoulder: the OTHER side's raw shoulder landmark, purely for
             real shoulder-width scale (see hook_detector.py).
         raw_yaw: current frame's yaw AFTER YAW_ELBOW_FADE, BEFORE
             yaw_filter() smoothing. May be None if elbow wasn't visible.
+        raw_elbow: current frame's elbow flex angle (track.elbow_ik_angle -
+            90ish=bent, 178ish=straight). Required to call anything a
+            "hook" - see ELBOW_BENT_THRESHOLD below for why. May be None.
         now: time.monotonic() timestamp for this frame.
 
         Returns None, or a dict on the frame a punch is classified:
             {"type": "hook" | "uppercut" | "punch",
-             "speed", "travel", "dx", "dy", "dtilt", "yaw"}
+             "speed", "travel", "dx", "dy", "dtilt", "yaw", "elbow"}
         "punch" means the speed/travel gate fired but neither the yaw nor
         the direction heuristic confidently called it hook or uppercut
         (could be a jab, or an ambiguous diagonal motion).
@@ -147,7 +164,16 @@ class PunchClassifier:
 
         off_cooldown = (now - self.last_punch_at) > HOOK_COOLDOWN_SEC
 
-        if not (inst_speed > HOOK_SPEED_THRESHOLD and travel > HOOK_TRAVEL_THRESHOLD and off_cooldown):
+        # Sanity cap - found in the negative dataset (travel=17.94 and 3.25
+        # shoulder-widths, both with elbow=None/untracked): a real arm's
+        # reach is well under 2 shoulder-widths, so anything past that is a
+        # tracking glitch (a landmark jump during an occlusion/dropout),
+        # not real motion - reject it outright rather than let a garbage
+        # spike feed a classification.
+        physically_plausible = travel < MAX_PLAUSIBLE_TRAVEL
+
+        if not (inst_speed > HOOK_SPEED_THRESHOLD and travel > HOOK_TRAVEL_THRESHOLD
+                and off_cooldown and physically_plausible):
             return None
 
         self.last_punch_at = now
@@ -156,17 +182,31 @@ class PunchClassifier:
         dy = ry - window_start["y"]
         dtilt = raw_tilt - window_start["tilt"]
 
-        punch_type = self._classify(dx, dy, dtilt, raw_yaw)
+        punch_type = self._classify(dx, dy, dtilt, raw_yaw, raw_elbow)
         return {
             "type": punch_type, "speed": inst_speed, "travel": travel,
-            "dx": dx, "dy": dy, "dtilt": dtilt, "yaw": raw_yaw,
+            "dx": dx, "dy": dy, "dtilt": dtilt, "yaw": raw_yaw, "elbow": raw_elbow,
         }
 
     @staticmethod
-    def _classify(dx, dy, dtilt, raw_yaw):
-        # 1. Yaw first - our own physically-direct signal, trust it over
-        # the 2D motion heuristic when it's clearly present.
-        if raw_yaw is not None and abs(raw_yaw) > HOOK_YAW_THRESHOLD:
+    def _classify(dx, dy, dtilt, raw_yaw, raw_elbow):
+        # Elbow bend gate - found necessary from a real 64-example negative
+        # dataset (punch_dataset.py 'n' mode) where ordinary movement
+        # (HAND_OUT_CENTER->HAND_OUT_LEFT, HAND_DOWN->HAND_OUT_LEFT) hit
+        # "hook" 100% of the time. Neither yaw nor the direction heuristic
+        # alone can tell a hook from an ordinary fast sideways reach - they
+        # look geometrically identical in wrist-relative-to-shoulder terms.
+        # A real hook keeps the elbow bent (~90-150 on this scale); an
+        # ordinary reach extends it much straighter (~160-178). Elbow bend
+        # is now REQUIRED for "hook", from either signal path below - if
+        # it's not confidently bent (or unknown), this can never be a hook,
+        # only uppercut or generic "punch".
+        elbow_bent = raw_elbow is not None and raw_elbow < ELBOW_BENT_THRESHOLD
+
+        # 1. Yaw - our own physically-direct signal, trust it over the 2D
+        # motion heuristic when it's clearly present AND the elbow backs
+        # it up.
+        if elbow_bent and raw_yaw is not None and abs(raw_yaw) > HOOK_YAW_THRESHOLD:
             return "hook"
 
         # 2. No strong yaw - fall back to which axis dominates the wrist's
@@ -192,9 +232,18 @@ class PunchClassifier:
         horizontal = abs(dx)
         vertical = abs(dy)
         rising = -dy
-        if rising > 0 and rising > horizontal * DIRECTION_DOMINANCE_RATIO:
+        # Same elbow-bend requirement as hook - found necessary from the
+        # SAME negative dataset: elbow=180 (dead straight) cases were still
+        # getting called "uppercut" purely from a fast upward-dominant
+        # raise (e.g. mid-transition between rest poses). A real uppercut
+        # keeps the elbow bent and compact the same way a real hook does -
+        # a straight-arm raise isn't one, no matter how fast/vertical it is.
+        if elbow_bent and rising > 0 and rising > horizontal * DIRECTION_DOMINANCE_RATIO:
             return "uppercut"
-        if horizontal > vertical * DIRECTION_DOMINANCE_RATIO:
+        # Same elbow-bend requirement as the yaw path above - a fast,
+        # horizontal-dominant reach with a STRAIGHT arm is not a hook, it's
+        # exactly the false positive the negative dataset caught.
+        if elbow_bent and horizontal > vertical * DIRECTION_DOMINANCE_RATIO:
             return "hook"
 
         return "punch"
@@ -275,6 +324,7 @@ def _standalone_test():
 
             elbow_visible = elbow.visibility >= track.VISIBILITY_MIN
             raw_yaw = None
+            raw_elbow = None
             if elbow_visible:
                 hip = lm[tracked_side["hip"]]
                 l1_frame = track.landmark_distance(shoulder, elbow, keys=("x", "y", "z"))
@@ -291,14 +341,14 @@ def _standalone_test():
                     fade = (track.YAW_ELBOW_FADE_START - raw_elbow) / (track.YAW_ELBOW_FADE_START - track.YAW_ELBOW_FADE_END)
                     raw_yaw *= track.clamp(fade, 0.0, 1.0)
 
-            result = classifier.update(shoulder, wrist, other_shoulder, raw_yaw, frame_time)
+            result = classifier.update(shoulder, wrist, other_shoulder, raw_yaw, raw_elbow, frame_time)
             if result:
                 flash_label = result["type"].upper()
                 flash_until = frame_time + FLASH_DURATION_SEC
                 print(
                     f"{flash_label}  speed={result['speed']:.2f} travel={result['travel']:.2f} "
                     f"dx={result['dx']:+.2f} dy={result['dy']:+.2f} dtilt={result['dtilt']:+.1f} "
-                    f"yaw={result['yaw']}"
+                    f"yaw={result['yaw']} elbow={result['elbow']}"
                 )
 
             yaw_str = f"{raw_yaw:.1f}" if raw_yaw is not None else "n/a"
