@@ -86,3 +86,67 @@ Mode: UPPERCUT - throw real uppercuts
 [UPPERCUT #41 recorded (guessed hook)] speed=10.30 travel=1.06 dx=-0.12 dy=+1.06 dtilt=-113.9 yaw=-0.0
 [UPPERCUT #42 recorded (guessed hook)] speed=9.54 travel=0.51 dx=+0.30 dy=-0.42 dtilt=+32.8 yaw=-55.26811025108516
 [UPPERCUT #43 recorded] speed=10.05 travel=0.57 dx=+0.31 dy=-0.47 dtilt=+29.1 yaw=-0.0
+
+
+
+
+[HOOK #8 recorded (guessed punch)] speed=15.90 travel=0.57 dx=+0.46 dy=-0.18 dtilt=-10.4 yaw=-0.0 elbow=180.0
+[HOOK #9 recorded (guessed punch)] speed=6.17 travel=0.94 dx=-0.90 dy=-0.27 dtilt=-11.6 yaw=-0.0 elbow=180.0
+[HOOK #10 recorded (guessed punch)] speed=12.69 travel=0.51 dx=+0.38 dy=-0.18 dtilt=-8.7 yaw=-0.0 elbow=180.0
+[HOOK #11 recorded (guessed punch)] speed=9.89 travel=0.78 dx=-0.77 dy=-0.12 dtilt=-37.0 yaw=-0.0 elbow=180.0
+[HOOK #12 recorded (guessed punch)] speed=9.22 travel=0.59 dx=+0.53 dy=-0.25 dtilt=-25.8 yaw=-0.0 elbow=180.0
+[HOOK #13 recorded (guessed punch)] speed=8.93 travel=0.50 dx=-0.50 dy=-0.01 dtilt=-12.7 yaw=-0.0 elbow=180.0
+[HOOK #14 recorded] speed=13.77 travel=0.57 dx=+0.36 dy=-0.44 dtilt=+13.7 yaw=-81.96463585470559 elbow=28.432215743995798
+[HOOK #15 recorded] speed=6.46 travel=0.51 dx=-0.51 dy=-0.04 dtilt=-11.4 yaw=-49.929036061438666 elbow=159.6681119981202
+[HOOK #16 recorded (guessed punch)] speed=6.64 travel=0.49 dx=-0.46 dy=-0.18 dtilt=+24.7 yaw=-0.0 elbow=180.0
+[HOOK #17 recorded (guessed punch)] speed=12.97 travel=0.73 dx=-0.73 dy=-0.08 dtilt=-21.6 yaw=-0.0 elbow=180.0
+[HOOK #18 recorded] speed=22.58 travel=0.79 dx=+0.64 dy=-0.27 dtilt=-34.6 yaw=-102.14885102977425 elbow=114.61278915952482
+[HOOK #19 recorded (guessed punch)] speed=7.79 travel=0.64 dx=-0.63 dy=-0.15 dtilt=-18.4 yaw=-0.0 elbow=180.0
+[HOOK #20 recorded] speed=6.04 travel=0.41 dx=-0.38 dy=+0.15 dtilt=+22.9 yaw=109.75053647822641 elbow=99.33155888286063
+[HOOK #21 recorded] speed=6.03 travel=0.47 dx=-0.47 dy=-0.01 dtilt=-12.9 yaw=-99.64085854905674 elbow=92.68318633854496
+[HOOK #22 recorded] speed=17.94 travel=0.56 dx=+0.31 dy=-0.39 dtilt=-0.8 yaw=-92.2798810648755 elbow=96.89669950893673
+[HOOK #23 recorded (guessed punch)] speed=9.29 travel=0.94 dx=-0.87 dy=-0.36 dtilt=-20.8 yaw=-0.0 elbow=172.79322675006287
+[HOOK #24 recorded (guessed punch)] speed=14.03 travel=0.46 dx=+0.36 dy=-0.29 dtilt=-4.5 yaw=-0.0 elbow=180.0
+[HOOK #25 recorded (guessed punch)] speed=11.39 travel=0.76 dx=-0.74 dy=-0.17 dtilt=-42.5 yaw=-0.0 elbow=180.0
+[HOOK #26 recorded] speed=9.46 travel=0.44 dx=+0.28 dy=-0.12 dtilt=-7.7 yaw=-63.83464200268642 elbow=155.42391951480963
+[HOOK #27 recorded (guessed punch)] speed=12.03 travel=0.61 dx=-0.59 dy=-0.16 dtilt=-8.1 yaw=-0.0 elbow=180.0
+[HOOK #28 recorded] speed=18.61 travel=0.97 dx=+0.89 dy=-0.27 dtilt=-35.6 yaw=-94.48783224609703 elbow=140.81757109114093
+[HOOK #29 recorded] speed=32.93 travel=0.87 dx=+0.77 dy=-0.07 dtilt=-25.8 yaw=-104.8037734904492 elbow=57.94220941178914
+[HOOK #30 recorded (guessed punch)] speed=10.43 travel=1.09 dx=-1.03 dy=-0.34 dtilt=-48.3 yaw=-31.207236692199366 elbow=162.34688158988615
+[HOOK #31 recorded] speed=13.28 travel=0.41 dx=+0.20 dy=-0.11 dtilt=-5.7 yaw=-101.17412079389622 elbow=90.34469309955631
+[HOOK #32 recorded] speed=10.76 travel=0.74 dx=-0.74 dy=-0.07 dtilt=-31.3 yaw=-87.1291792252889 elbow=140.51918101355304
+[HOOK #33 recorded] speed=7.58 travel=0.59 dx=-0.58 dy=+0.08 dtilt=+26.6 yaw=136.8838227768067 elbow=63.704523948339784
+[HOOK #34 recorded] speed=10.55 travel=0.69 dx=-0.69 dy=-0.09 dtilt=-23.6 yaw=-89.15101322159434 elbow=141.930573153316
+[HOOK #35 recorded] speed=6.27 travel=0.42 dx=-0.38 dy=+0.18 dtilt=+19.7 yaw=-94.55734939997204 elbow=62.26469090696633
+[HOOK #36 recorded] speed=9.43 travel=0.55 dx=-0.46 dy=-0.29 dtilt=-14.6 yaw=-84.51438368388104 elbow=133.15248933346976
+[HOOK #37 recorded (guessed punch)] speed=6.02 travel=0.42 dx=-0.09 dy=+0.41 dtilt=-19.4 yaw=-45.45869144201808 elbow=133.8972963091813
+[HOOK #38 recorded] speed=11.08 travel=1.67 dx=+1.67 dy=-0.02 dtilt=+2.5 yaw=-110.20151107031968 elbow=97.37764821841277
+[HOOK #39 recorded] speed=8.60 travel=0.56 dx=-0.53 dy=+0.19 dtilt=+21.5 yaw=-105.49345669039971 elbow=44.57026970185869
+[HOOK #40 recorded] speed=17.29 travel=0.86 dx=-0.84 dy=+0.19 dtilt=-41.1 yaw=-93.86211265254742 elbow=114.87598275748945
+[HOOK #41 recorded] speed=8.30 travel=0.48 dx=-0.47 dy=+0.08 dtilt=+20.4 yaw=-67.45871901110198 elbow=156.62980367278246
+[HOOK #42 recorded] speed=6.73 travel=0.44 dx=-0.05 dy=+0.11 dtilt=-3.7 yaw=-106.19751114409144 elbow=49.6527227725802
+[HOOK #43 recorded] speed=9.81 travel=0.50 dx=+0.35 dy=-0.26 dtilt=+10.7 yaw=-83.20075429885145 elbow=137.78856667208146
+[HOOK #44 recorded (guessed punch)] speed=6.45 travel=0.54 dx=-0.53 dy=-0.10 dtilt=+24.1 yaw=-0.0 elbow=180.0
+[HOOK #45 recorded] speed=12.29 travel=0.73 dx=-0.73 dy=-0.07 dtilt=-41.9 yaw=-88.39785412795746 elbow=127.34602697780984
+[HOOK #46 recorded (guessed punch)] speed=7.00 travel=0.51 dx=+0.24 dy=+0.45 dtilt=-34.6 yaw=-21.254549748536917 elbow=30.916333063898733
+[HOOK #47 recorded] speed=13.71 travel=0.56 dx=+0.50 dy=-0.26 dtilt=+15.2 yaw=-90.01244487168144 elbow=110.30093761411348
+[HOOK #48 recorded] speed=12.56 travel=0.57 dx=-0.56 dy=+0.10 dtilt=-24.8 yaw=-95.71035590476698 elbow=100.41388112465864
+[HOOK #49 recorded] speed=8.77 travel=0.57 dx=+0.50 dy=-0.27 dtilt=+3.1 yaw=-91.68811220583271 elbow=119.79431342624406
+[HOOK #50 recorded (guessed punch)] speed=7.40 travel=0.67 dx=-0.65 dy=-0.18 dtilt=+6.4 yaw=-0.0 elbow=180.0
+[HOOK #51 recorded] speed=6.82 travel=0.46 dx=-0.42 dy=+0.20 dtilt=+9.0 yaw=-133.5208972753893 elbow=121.7212165585865
+[HOOK #52 recorded] speed=7.21 travel=0.52 dx=-0.51 dy=-0.07 dtilt=-15.9 yaw=-103.47339797003244 elbow=97.47616231146277
+[HOOK #53 recorded] speed=6.29 travel=0.45 dx=-0.43 dy=+0.13 dtilt=+13.1 yaw=-142.4632723432572 elbow=86.43825439067446
+[HOOK #54 recorded] speed=13.28 travel=0.68 dx=-0.68 dy=-0.03 dtilt=-14.7 yaw=-102.7860547169665 elbow=96.40843465688397
+[HOOK #55 recorded (guessed punch)] speed=6.92 travel=0.54 dx=-0.48 dy=-0.23 dtilt=+20.5 yaw=-0.0 elbow=180.0
+[HOOK #56 recorded] speed=7.62 travel=0.59 dx=-0.58 dy=-0.07 dtilt=-53.4 yaw=-76.39301938177253 elbow=151.90516855252622
+[HOOK #57 recorded (guessed punch)] speed=28.38 travel=0.88 dx=+0.60 dy=-0.40 dtilt=+7.6 yaw=-0.0 elbow=180.0
+[HOOK #58 recorded] speed=9.72 travel=0.93 dx=-0.93 dy=+0.10 dtilt=-46.3 yaw=-96.87460202708543 elbow=123.86355887187622
+[HOOK #59 recorded] speed=6.98 travel=0.48 dx=-0.47 dy=+0.11 dtilt=+18.4 yaw=-84.08185887759821 elbow=155.29006064479674
+[HOOK #60 recorded] speed=9.17 travel=0.46 dx=-0.46 dy=+0.04 dtilt=-13.2 yaw=-98.970153246545 elbow=103.4144185159725
+[HOOK #61 recorded] speed=6.28 travel=0.53 dx=-0.50 dy=+0.16 dtilt=+17.1 yaw=-91.32077128664 elbow=63.46390568242212
+[HOOK #62 recorded] speed=7.93 travel=0.47 dx=-0.47 dy=+0.03 dtilt=-8.5 yaw=-98.30373061825371 elbow=118.48706905282855
+[HOOK #63 recorded] speed=6.03 travel=0.45 dx=-0.43 dy=+0.10 dtilt=+22.5 yaw=122.52634976713783 elbow=75.70714406188863
+[HOOK #64 recorded (guessed punch)] speed=7.15 travel=0.48 dx=-0.47 dy=+0.01 dtilt=-18.9 yaw=-0.0 elbow=180.0
+[HOOK #65 recorded] speed=14.58 travel=0.62 dx=+0.57 dy=-0.17 dtilt=-17.9 yaw=-90.32814134431317 elbow=71.9824930173337
+[HOOK #66 recorded] speed=6.77 travel=0.49 dx=-0.49 dy=+0.07 dtilt=+20.7 yaw=179.24626298582803 elbow=54.09967735188423
+[HOOK #67 recorded (guessed punch)] speed=8.24 travel=0.58 dx=-0.57 dy=+0.11 dtilt=-25.8 yaw=-0.0 elbow=180.0

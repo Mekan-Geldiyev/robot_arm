@@ -507,6 +507,19 @@ def main():
             if finished:
                 hook_start_time = None
                 animating = False
+                # Restart the classifier's cooldown from NOW, not from the
+                # original detection instant. Otherwise, for animations
+                # that take longer than HOOK_COOLDOWN_SEC to play out
+                # (starting far from the target - e.g. near guard, ~400ms
+                # total vs a 350ms cooldown), the cooldown expires before
+                # the animation even finishes. Your real arm is almost
+                # always still snapping back fast at that exact moment,
+                # which looks like a second hook to the classifier (same
+                # shape, reversed direction - it doesn't check sign) -
+                # that's the "double dip" / short second hook. Re-arming
+                # here gives a full fresh cooldown for the retraction to
+                # settle before anything can fire again.
+                punch_classifier.last_punch_at = frame_time
                 print(">>> Hook animation complete - resuming live yaw/elbow tracking")
 
         # Smooth the interpolated output itself (see OUTPUT_MIN_CUTOFF/BETA
