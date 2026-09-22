@@ -266,6 +266,40 @@ wrist).
 > needs to work well, it likely needs its own handling (e.g. leaning more
 > on `z` depth data) rather than just wider MIN/MAX ranges.
 
+## Planned: voice-cued punch selection
+
+The hardest unsolved problem in the current system isn't detecting *that*
+a fast strike happened - the speed/travel gate in `punch_classifier.py`
+already does that reliably. It's classifying *what kind* of punch it was
+from vision alone: a wide, straight-armed hook and an ordinary fast reach
+are genuinely ambiguous in the signals available to a single webcam (see
+`punch_classifier.py`'s `ELBOW_BENT_THRESHOLD` notes) - real labeled data
+confirmed this isn't a tunable gap, it's an information limit on what a
+monocular camera can distinguish.
+
+The idea: stop trying to infer punch type from vision, and just ask the
+user. Before throwing, say the punch and the angle out loud - e.g. "hook,
+forty-five" - which sets a `next_punch = {"type": ..., "angle": ...}`
+variable via speech recognition. The camera keeps mirroring live exactly
+as it does now. When the existing speed/travel gate detects a real strike,
+instead of guessing the type from ambiguous geometry, it plays a scripted
+animation parameterized by whatever was already declared - generalizing
+the same mechanism `hook_animation_test.py` already uses for hooks (a
+pure per-frame curve, live pan/tilt, duration that adapts to distance) to
+any punch type and any target angle, instead of the one hardcoded hook
+depth it currently plays.
+
+This turns the hardest, most ambiguous part of the system (classifying
+type from noisy geometry) into two easy problems instead: detecting that
+something happened (already solved) and a user-declared parameter
+(trivial). To a viewer it should still look and feel like the arm is
+reading the punch live - it just also happens to already know what's
+coming.
+
+Depends on the extended-range hardware upgrade below - the current
+mechanical range can't physically reach real guard/uppercut angles yet,
+so there's nothing to animate *to* until that's fixed.
+
 ## Status / roadmap
 
 - [x] Hardware wired and tested
@@ -276,5 +310,20 @@ wrist).
 - [x] Elbow servo (channel 3) installed and enabled
 - [x] Yaw servo (channel 2, 3rd shoulder DOF) installed and enabled -
       needs `YAW_MIN/MAX` hardware calibration
-- [ ] Second arm (right side)
+- [x] Hook/uppercut/punch classification + scripted hook-strike animation
+      (`interpolation_approach/`)
+- [ ] Extended-range servos for guard/uppercut angles the current
+      mechanical range can't reach - look for wide-range **positional**
+      servos (e.g. 270-300°, still holding an exact commanded angle),
+      NOT continuous-rotation "360°" servos. A true continuous-rotation
+      servo is a geared motor with speed/direction control and no angle
+      feedback at all - it can't hold a position, which would break the
+      whole angle-based control model this codebase is built on
+- [ ] 3D-printed arm parts (stronger, custom-fit - the current Lego +
+      hot-glue construction is the load-bearing constraint on both range
+      of motion and reliability)
+- [ ] Second arm (mirroring the user's other arm - the current build
+      already covers left)
+- [ ] Voice-cued punch selection (see above) - depends on the two items
+      above
 - [ ] Full body tracking

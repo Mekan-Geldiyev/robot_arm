@@ -27,8 +27,21 @@ import math
 import os
 import sys
 import time
+import types
 
 import cv2
+
+# See the matching comment in track.py - Windows Smart App Control blocks
+# matplotlib's native DLL, which mediapipe's own package init pulls in
+# transitively even though this project never uses it. Stubbed out here too
+# since this file imports mediapipe directly, before it imports track.
+if "matplotlib" not in sys.modules:
+    _stub_matplotlib = types.ModuleType("matplotlib")
+    _stub_pyplot = types.ModuleType("matplotlib.pyplot")
+    _stub_matplotlib.pyplot = _stub_pyplot
+    sys.modules["matplotlib"] = _stub_matplotlib
+    sys.modules["matplotlib.pyplot"] = _stub_pyplot
+
 import mediapipe as mp
 import serial
 

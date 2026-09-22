@@ -19,10 +19,29 @@ pose_landmarker_lite.task next to this script the first time you run it.
 
 import math
 import os
+import sys
 import time
+import types
 import urllib.request
 
 import cv2
+
+# Windows Smart App Control (Settings > Privacy & security > Windows
+# Security > App & browser control) blocks matplotlib's native DLL
+# (_c_internal_utils) as an unrecognized binary. mediapipe's own package
+# init pulls matplotlib in transitively just from `import mediapipe`
+# (tasks.python.vision -> drawing_styles -> drawing_utils -> pyplot), even
+# though this project only ever calls draw_landmarks() (pure cv2 under the
+# hood) - plot_landmarks(), the one function that actually touches plt, is
+# never used here. Stub both modules out before mediapipe gets a chance to
+# import the real ones, so the blocked DLL is never touched at all.
+if "matplotlib" not in sys.modules:
+    _stub_matplotlib = types.ModuleType("matplotlib")
+    _stub_pyplot = types.ModuleType("matplotlib.pyplot")
+    _stub_matplotlib.pyplot = _stub_pyplot
+    sys.modules["matplotlib"] = _stub_matplotlib
+    sys.modules["matplotlib.pyplot"] = _stub_pyplot
+
 import mediapipe as mp
 import serial
 

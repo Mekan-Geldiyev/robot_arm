@@ -93,9 +93,63 @@ assuming a bad-looking calibration point is a capture mistake.
 
 Some calibrated poses (e.g. a proper boxing guard) currently can't be
 reached at all because pan/tilt hit a mechanical hard-stop before the true
-position - a hardware range limitation (continuous-rotation servos have been
-discussed as a possible fix, not committed), not something fixable by
-recalibrating.
+position - a hardware range limitation, not something fixable by
+recalibrating. The fix is wide-range **positional** servos (e.g. 270-300°,
+still holding an exact commanded angle via a pot/magnetic encoder) - NOT
+continuous-rotation "360°" servos, which are geared motors with
+speed/direction control and no angle feedback at all. Every script in this
+repo commands and holds absolute angles; a true continuous-rotation servo
+can't do that and would break the entire control model.
+
+## Punch classification + hook animation (`interpolation_approach/`)
+
+Layered on top of `track_interpolation.py`'s live mirroring:
+`hook_detector.py`/`punch_classifier.py` watch wrist speed + travel (a
+reliable, low-ambiguity "did a strike just happen" gate, adapted from a
+separate webcam fighting-game project called EFIGHT) plus elbow bend and
+yaw/direction to guess punch *type* (hook/uppercut/punch). Real labeled
+data (`punch_dataset.py`) showed type-classification from vision alone has
+a genuine information limit, not just a tuning gap - a wide, straight-armed
+hook is kinematically indistinguishable from an ordinary fast reach.
+
+When a hook is detected, `hook_animation_test.py`'s scripted, stateless
+per-frame curve (`hook_animation_frame(elapsed_ms, start_yaw)`) takes over
+yaw/elbow only - pan/tilt keep tracking live - because live-tracking a fast
+hook was too noisy (real hook elbow angles sit inside `YAW_ELBOW_FADE`'s
+transition band, amplifying noise into big yaw swings). The animation
+starts from whatever yaw the arm was actually at, not a hardcoded value.
+`punch_classifier.last_punch_at` gets re-armed when the animation
+*finishes*, not when the hook was *detected* - otherwise a real arm
+retraction that outlasts the cooldown reads as a second hook (the
+"double-dip" bug).
+
+## Current direction (as of 2026-09-21)
+
+YC application (and others) close in ~1 month - priority is a demo that's
+reliable and impressive on camera, not architectural completeness.
+
+**Voice-cued punch selection** (planned, see README): the type-
+classification ambiguity above is being sidestepped rather than solved -
+the user declares the punch type + angle out loud before throwing
+(`next_punch` state), the existing speed/travel gate just confirms *that* a
+strike happened, then a generalized version of the hook animation (any
+type/angle, not just the one hardcoded hook depth) plays. Other input
+methods were considered (a physical button, resistance bands on a pole the
+user holds to signal angle) - voice was picked for now as fastest to
+prototype, not because the others were rejected outright.
+
+**Decided sequencing**: build the voice-cued software on the *current*
+single arm first (needs no new hardware, days not weeks, fixes the
+project's biggest reliability weakness) before starting the hardware
+upgrade below. Explicitly avoid starting both in parallel - two half-
+finished arms is worse than one that's solid.
+
+**Hardware upgrade (next, after voice-cued software works)**: 3D-printed
+arm parts (current Lego + hot-glue is the load-bearing constraint on both
+range and reliability) and wide-range positional servos (see above) to
+finally reach guard/uppercut angles. A second arm (mirroring the user's
+other side) is the stretch goal after that - not a dependency for a
+working demo.
 
 ## Running it
 
