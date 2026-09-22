@@ -1,8 +1,9 @@
 # DEMO VIDEO
 
 LINK TO DEMO: [
-https://www.dropbox.com/scl/fi/4ilwa5an4t0apt6fe3xol/robotic_demo.mp4?rlkey=p3htwtghstjc71deba690wt2j&st=gpqrl9y0&dl=0](url)
-<img width="1072" height="597" alt="image" src="https://github.com/user-attachments/assets/4d903c41-5627-4f7f-81ab-ef708faaa1a8" />
+https://www.dropbox.com/scl/fi/22eq9liee4u3cuzz4cdll/demovid2.mp4?rlkey=ak88vl7npl2zlx96b5431a55y&st=5my26a4f&dl=0
+<img width="1336" height="868" alt="image" src="https://github.com/user-attachments/assets/35d313b4-ae53-4bc4-81ac-a3bf6648b8b2" />
+
 
 
 
