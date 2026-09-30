@@ -55,6 +55,8 @@ if _PARENT_DIR not in sys.path:
 
 import track  # noqa: E402  (import after sys.path setup, intentional)
 import hook_animation_test  # noqa: E402
+import punch_angle_test  # noqa: E402
+import voice_punch  # noqa: E402
 from punch_classifier import PunchClassifier, LABEL_COLORS  # noqa: E402
 
 # ==================== TUNABLE SETTINGS ====================
@@ -373,19 +375,41 @@ def main():
     start_time = time.monotonic()
 
     # Punch classification (hook / uppercut / unclassified punch) - see
-    # punch_classifier.py. Only "hook" triggers the scripted animation
-    # (hook_animation_test.py) right now, since that's the only animation
-    # that exists - uppercut/punch are classified and shown on screen for
-    # visibility, but don't yet DO anything different from normal live
-    # tracking. While hook_start_time is not None, yaw/elbow are driven by
-    # the scripted curve instead of live interpolation; pan/tilt keep
-    # coming from the normal live pipeline the entire time either way, so
-    # only the two channels proven unstable during a real hook (yaw, elbow
-    # - see the HOOK_* notes in calibration_data.json) get overridden.
+    # punch_classifier.py. Two SEPARATE animation paths exist, and only one
+    # runs on any given frame:
+    #   - Automatic (no voice command pending): only "hook" triggers
+    #     hook_animation_test.py, exactly as before voice was added - yaw
+    #     /elbow scripted, pan/tilt stay live. This path is untouched by
+    #     the voice integration below on purpose (it's already tuned/
+    #     verified - see the double-dip fix history in CLAUDE.md).
+    #   - Voice-cued (see voice_punch.py): ANY of the 4 named punches
+    #     (punch_angle_test.PUNCH_TILTS - Uppercut/High Overhand/Overhand/
+    #     Hook) gets the fuller punch_angle_test.py animation instead -
+    #     tilt/yaw/elbow all scripted, only pan stays live. This includes
+    #     voice-cued "hook", which now also drives tilt to 90 explicitly
+    #     rather than leaving it live like the automatic path does - hook
+    #     is formally part of this family now, so it gets the family's
+    #     full treatment when you name it, not the older partial one.
     punch_classifier = PunchClassifier()
     hook_start_time = None
-    hook_start_yaw = None  # yaw's ACTUAL value at the moment a hook was detected -
+    hook_start_yaw = None  # yaw's ACTUAL value at the moment a hook was auto-detected -
                             # the strike animates from here, not a fixed guard pose
+
+    punch_anim_start_time = None
+    punch_anim_start_tilt = None
+    punch_anim_start_yaw = None
+    punch_anim_target_tilt = None
+    punch_anim_target_yaw = None
+
+    # Voice-cued punch selection (see voice_punch.py + CLAUDE.md's "Current
+    # direction") - name the punch before throwing instead of guessing
+    # type from ambiguous vision. Runs in its own thread; only consumed
+    # (pop_next_punch()) right when punch_classifier's speed/travel gate
+    # actually fires below, never every frame, so an unrelated later
+    # motion can't accidentally consume a stale voice command.
+    voice_listener = voice_punch.create_listener()  # voice_punch.INPUT_MODE picks voice vs. typed
+    voice_listener.start()
+
     punch_flash_label = ""
     punch_flash_until = 0.0
 
@@ -476,19 +500,35 @@ def main():
         # already running.
         punch_result = punch_classifier.update(shoulder, wrist, other_shoulder, raw_yaw, raw_elbow, frame_time)
         start_hook_this_frame = False
+        start_voice_punch_this_frame = False
+        voice_punch_target = None  # (tilt, yaw) captured below if a voice command fires this frame
         if punch_result:
-            punch_flash_label = punch_result["type"].upper()
+            # A strike happened (the gate above already confirmed that) -
+            # if a voice command is pending, trust its declared punch over
+            # the classifier's own geometric guess instead of just
+            # displaying both. Only consumed here, not every frame, so an
+            # unrelated later motion can't burn a stale command (see
+            # PENDING_EXPIRY_SEC in voice_punch.py).
+            voice_punch_cmd = voice_listener.pop_next_punch()
+            effective_type = voice_punch_cmd["type"] if voice_punch_cmd else punch_result["type"]
+
+            punch_flash_label = effective_type.upper()
             punch_flash_until = frame_time + 1.0
             yaw_str = f"{punch_result['yaw']:.1f}" if punch_result["yaw"] is not None else "n/a"
             print(f"\n>>> {punch_flash_label} (speed={punch_result['speed']:.2f} "
                   f"travel={punch_result['travel']:.2f} yaw={yaw_str})")
-            if punch_result["type"] == "hook" and hook_start_time is None:
-                # Don't grab a starting yaw here - this frame's live yaw_f
-                # hasn't been computed yet (that happens below). Just flag
-                # it; the actual hook_start_time/hook_start_yaw capture
-                # happens right after yaw_f exists, so the strike starts
-                # from THIS frame's real tracked position, not a stale or
-                # missing one.
+
+            if voice_punch_cmd and punch_anim_start_time is None:
+                # Any of the 4 named punches now has a real tilt+yaw target
+                # (punch_angle_test.PUNCH_TILTS), so all 4 get the fuller
+                # animation - not just hook like before. Don't grab
+                # start_tilt/start_yaw here - this frame's live tilt_f/
+                # yaw_f haven't been computed yet (that happens below).
+                start_voice_punch_this_frame = True
+                voice_punch_target = (voice_punch_cmd["tilt"], voice_punch_cmd["yaw"])
+            elif effective_type == "hook" and hook_start_time is None:
+                # No voice command pending - fall back to the original
+                # automatic detection path exactly as before.
                 start_hook_this_frame = True
 
         smooth_pan = pan_filter(frame_time, raw_pan)
@@ -505,17 +545,26 @@ def main():
         if start_hook_this_frame:
             hook_start_time = frame_time
             hook_start_yaw = yaw_f  # wherever live tracking actually has yaw right now
-            print(">>> Playing hook animation, pan/tilt still live\n")
+            print(">>> Playing hook animation (auto-detected), pan/tilt still live\n")
 
-        # If a hook animation is playing, yaw/elbow come from the scripted
-        # curve instead of live interpolation - pan/tilt (already computed
-        # above from live tracking) are untouched either way. This is the
-        # hybrid: the two channels proven unstable during a real hook get a
-        # verified animation, everything else keeps mirroring you live.
+        if start_voice_punch_this_frame:
+            punch_anim_start_time = frame_time
+            punch_anim_start_tilt = tilt_f
+            punch_anim_start_yaw = yaw_f
+            punch_anim_target_tilt, punch_anim_target_yaw = voice_punch_target
+            print(f">>> Playing {punch_flash_label} animation (voice-cued), pan still live\n")
+
+        # Automatic path: yaw/elbow come from the scripted curve instead of
+        # live interpolation - pan/tilt (already computed above from live
+        # tracking) are untouched either way. This is the hybrid: the two
+        # channels proven unstable during a real hook get a verified
+        # animation, everything else keeps mirroring you live.
         animating = hook_start_time is not None
         if animating:
             elapsed_ms = (frame_time - hook_start_time) * 1000.0
-            anim_yaw, anim_elbow, finished = hook_animation_test.hook_animation_frame(elapsed_ms, start_yaw=hook_start_yaw)
+            anim_yaw, anim_elbow, finished = hook_animation_test.hook_animation_frame(
+                elapsed_ms, start_yaw=hook_start_yaw
+            )
             _, _, yaw_f, elbow_f = apply_safety_limits((pan_f, tilt_f, anim_yaw, anim_elbow))
             if finished:
                 hook_start_time = None
@@ -535,20 +584,40 @@ def main():
                 punch_classifier.last_punch_at = frame_time
                 print(">>> Hook animation complete - resuming live yaw/elbow tracking")
 
+        # Voice-cued path: tilt/yaw/elbow all come from the scripted curve
+        # (punch_angle_test.punch_animation_frame - reposition tilt, then
+        # strike) - only pan stays live. Same cooldown re-arming as the
+        # automatic path above, for the same double-dip reason.
+        punch_animating = punch_anim_start_time is not None
+        if punch_animating:
+            elapsed_ms = (frame_time - punch_anim_start_time) * 1000.0
+            anim_tilt, anim_yaw, anim_elbow, finished = punch_angle_test.punch_animation_frame(
+                elapsed_ms,
+                start_tilt=punch_anim_start_tilt, target_tilt=punch_anim_target_tilt,
+                start_yaw=punch_anim_start_yaw, target_yaw=punch_anim_target_yaw,
+            )
+            pan_f, tilt_f, yaw_f, elbow_f = apply_safety_limits((pan_f, anim_tilt, anim_yaw, anim_elbow))
+            if finished:
+                punch_anim_start_time = None
+                punch_animating = False
+                punch_classifier.last_punch_at = frame_time
+                print(">>> Punch animation complete - resuming live tracking")
+
         # Smooth the interpolated output itself (see OUTPUT_MIN_CUTOFF/BETA
         # above) - this is what damps the jump when the nearest-neighbor
         # set changes, which raw-signal smoothing alone can't reach. BUT
         # skip it when snapped (len(used)==1, see SNAP_DISTANCE) - that
         # value is already a confident, verified calibration match, not
-        # noise to smooth away - and skip it on yaw/elbow while animating,
-        # for the same reason: a scripted curve isn't noise either, and
-        # smoothing it would just add lag on top of carefully-tuned timing
-        # (see apply_output_filter()).
+        # noise to smooth away - and skip it on any channel a scripted
+        # curve currently owns, for the same reason: it isn't noise either,
+        # and smoothing it would just add lag on top of carefully-tuned
+        # timing (see apply_output_filter()). tilt is only ever scripted by
+        # the voice-cued path - the automatic path always leaves it live.
         snapped = len(used) == 1
         pan_f = apply_output_filter(out_pan_filter, frame_time, pan_f, snapped)
-        tilt_f = apply_output_filter(out_tilt_filter, frame_time, tilt_f, snapped)
-        yaw_f = apply_output_filter(out_yaw_filter, frame_time, yaw_f, snapped or animating)
-        elbow_f = apply_output_filter(out_elbow_filter, frame_time, elbow_f, snapped or animating)
+        tilt_f = apply_output_filter(out_tilt_filter, frame_time, tilt_f, snapped or punch_animating)
+        yaw_f = apply_output_filter(out_yaw_filter, frame_time, yaw_f, snapped or animating or punch_animating)
+        elbow_f = apply_output_filter(out_elbow_filter, frame_time, elbow_f, snapped or animating or punch_animating)
 
         pan, tilt, yaw, elbow_out = int(pan_f), int(tilt_f), int(yaw_f), int(elbow_f)
 
@@ -618,6 +687,7 @@ def main():
         if cv2.waitKey(1) & 0xFF == ord("q"):
             break
 
+    voice_listener.stop()
     cap.release()
     cv2.destroyAllWindows()
     landmarker.close()

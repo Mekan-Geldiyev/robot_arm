@@ -101,6 +101,13 @@ speed/direction control and no angle feedback at all. Every script in this
 repo commands and holds absolute angles; a true continuous-rotation servo
 can't do that and would break the entire control model.
 
+Not every "hard stop" turned out to be a pure limitation, though: tilt
+passes a mechanical top-dead-center around 90° and folds back down,
+bottoming out around tilt=180 - originally logged as just a boundary to
+respect, it turned out to be exactly the folded-over position needed for
+an uppercut (see `punch_angle_test.py` below). Worth re-examining other
+"hard stops" the same way before assuming they're pure downsides.
+
 ## Punch classification + hook animation (`interpolation_approach/`)
 
 Layered on top of `track_interpolation.py`'s live mirroring:
@@ -112,44 +119,69 @@ data (`punch_dataset.py`) showed type-classification from vision alone has
 a genuine information limit, not just a tuning gap - a wide, straight-armed
 hook is kinematically indistinguishable from an ordinary fast reach.
 
-When a hook is detected, `hook_animation_test.py`'s scripted, stateless
-per-frame curve (`hook_animation_frame(elapsed_ms, start_yaw)`) takes over
-yaw/elbow only - pan/tilt keep tracking live - because live-tracking a fast
-hook was too noisy (real hook elbow angles sit inside `YAW_ELBOW_FADE`'s
-transition band, amplifying noise into big yaw swings). The animation
-starts from whatever yaw the arm was actually at, not a hardcoded value.
+When a hook is auto-detected (no voice/text command pending - see below),
+`hook_animation_test.py`'s scripted, stateless per-frame curve
+(`hook_animation_frame(elapsed_ms, start_yaw)`) takes over yaw/elbow only -
+pan/tilt keep tracking live - because live-tracking a fast hook was too
+noisy (real hook elbow angles sit inside `YAW_ELBOW_FADE`'s transition
+band, amplifying noise into big yaw swings). The animation starts from
+whatever yaw the arm was actually at, not a hardcoded value.
 `punch_classifier.last_punch_at` gets re-armed when the animation
 *finishes*, not when the hook was *detected* - otherwise a real arm
 retraction that outlasts the cooldown reads as a second hook (the
-"double-dip" bug).
+"double-dip" bug, confirmed fixed via live retest 2026-09-21).
+
+## Punch family + voice/text selection (`interpolation_approach/`)
+
+`punch_angle_test.py` generalizes the single hook animation above into a
+4-punch family built from two axes: tilt sets which height/angle a punch
+comes from, yaw provides the fast strike sweep (same proven curve as the
+hook animation). `PUNCH_TILTS` is the single source of truth - hand-tuned
+from real testing, not a formula, and went through two rounds of
+correction already (labels swapped once, one tilt moved 95°):
+`{"uppercut": 180, "high overhand": 40, "overhand": 45, "hook": 90}`.
+Also runnable standalone as a keyboard test (keys 1-4).
+
+`voice_punch.py` lets the user *name* the punch instead of relying on
+`punch_classifier.py`'s geometric guess - sidesteps the classification
+ambiguity above rather than solving it, since real labeled data confirmed
+that ambiguity is a genuine information limit, not a tunable gap. Naming a
+punch (voice via Vosk, or typed - `INPUT_MODE`, text is current default
+for testing without speaking out loud) arms a `{type, tilt, yaw}` command,
+consumed only at the exact moment `punch_classifier`'s speed/travel gate
+fires (never every frame, and it expires after `PENDING_EXPIRY_SEC` if
+never thrown) - then `track_interpolation.py` plays
+`punch_angle_test.punch_animation_frame()` (reposition tilt, then strike)
+instead of the classifier's own guess. This is a SEPARATE code path from
+the automatic hook-only one above: naming "hook" via voice now drives tilt
+to 90 explicitly (full family treatment), while automatic hook detection
+with no command pending still leaves tilt live, exactly as before - don't
+merge these two paths without re-verifying the automatic one's already-
+tuned feel doesn't regress.
 
 ## Current direction (as of 2026-09-21)
 
 YC application (and others) close in ~1 month - priority is a demo that's
 reliable and impressive on camera, not architectural completeness.
 
-**Voice-cued punch selection** (planned, see README): the type-
-classification ambiguity above is being sidestepped rather than solved -
-the user declares the punch type + angle out loud before throwing
-(`next_punch` state), the existing speed/travel gate just confirms *that* a
-strike happened, then a generalized version of the hook animation (any
-type/angle, not just the one hardcoded hook depth) plays. Other input
+**Software-first sequencing was the right call**: voice/text-cued
+selection (above) shipped on the *current* single arm with zero new
+hardware, directly fixing the project's biggest reliability weakness
+(punch-type classification) before any hardware work started. Other input
 methods were considered (a physical button, resistance bands on a pole the
-user holds to signal angle) - voice was picked for now as fastest to
-prototype, not because the others were rejected outright.
+user holds to signal angle) - voice/text was picked as fastest to
+prototype, not because the others were rejected outright; worth
+reconsidering if voice/text proves unreliable in the actual demo
+environment (background noise, etc).
 
-**Decided sequencing**: build the voice-cued software on the *current*
-single arm first (needs no new hardware, days not weeks, fixes the
-project's biggest reliability weakness) before starting the hardware
-upgrade below. Explicitly avoid starting both in parallel - two half-
-finished arms is worse than one that's solid.
-
-**Hardware upgrade (next, after voice-cued software works)**: 3D-printed
-arm parts (current Lego + hot-glue is the load-bearing constraint on both
-range and reliability) and wide-range positional servos (see above) to
-finally reach guard/uppercut angles. A second arm (mirroring the user's
-other side) is the stretch goal after that - not a dependency for a
-working demo.
+**Hardware upgrade (next)**: not started. 3D-printed arm parts (current
+Lego + hot-glue is the load-bearing constraint on both range and
+reliability) and wide-range positional servos (see above) to finally lift
+`YAW_SAFE_FLOOR` and reach full strike depth on every punch in the family.
+A second arm (mirroring the user's other side) is the stretch goal after
+that - not a dependency for a working demo. See the README's "Known
+limitations & open questions" section for the fuller, reviewer-facing
+version of this list.
 
 ## Running it
 

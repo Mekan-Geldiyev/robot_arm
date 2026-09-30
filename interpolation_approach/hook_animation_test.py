@@ -58,15 +58,13 @@ FIXED_ELBOW = 0
 # standalone blocking test below, which has no live tracking to grab a
 # real starting point from.
 STRIKE_START_YAW = 145
-STRIKE_END_YAW = 20               # deepened 30 -> 20 (2026-08-26) - NOT yet
-                                  # confirmed safe. track.YAW_SAFE_FLOOR is
-                                  # still 30, so the INTEGRATED pipeline will
-                                  # keep clamping to 30 regardless of this
-                                  # value until 20 is tested standalone here
-                                  # (no floor in this script) and confirmed
-                                  # not straining, same as the 40->30 move.
-                                  # Don't lower YAW_SAFE_FLOOR to match until
-                                  # that's actually been checked.
+STRIKE_END_YAW = 20               # deepened 30 -> 20 (2026-08-26), confirmed
+                                  # safe standalone and matched by
+                                  # track.YAW_SAFE_FLOOR = 20. This is the
+                                  # default depth only - voice-cued punches
+                                  # can request a shallower/deeper target via
+                                  # hook_animation_frame's target_yaw param,
+                                  # still bounded by YAW_SAFE_FLOOR either way.
 
 # Duration now scales with actual distance traveled instead of being fixed
 # - since the start point varies (see above), a fixed duration would make
@@ -116,7 +114,7 @@ def send(ser, pan, tilt, yaw, elbow):
     ser.write(f"{pan},{tilt},{yaw},{elbow}\n".encode())
 
 
-def hook_animation_frame(elapsed_ms, start_yaw=None):
+def hook_animation_frame(elapsed_ms, start_yaw=None, target_yaw=None):
     """Pure/stateless: given elapsed ms since the animation started (and
     the ACTUAL yaw value at the moment it started), return
     (yaw, elbow, finished). Single source of truth for the animation curve
@@ -126,8 +124,17 @@ def hook_animation_frame(elapsed_ms, start_yaw=None):
     start_yaw: wherever yaw actually was when the hook was detected -
     defaults to STRIKE_START_YAW for the standalone test (no live tracking
     to grab a real value from there). The strike eases from THIS to
-    STRIKE_END_YAW, not from a fixed guard pose - see the comment above
+    target_yaw, not from a fixed guard pose - see the comment above
     STRIKE_START_YAW for why that matters.
+
+    target_yaw: how deep this particular strike goes - defaults to
+    STRIKE_END_YAW (the safety-verified default depth) so every existing
+    caller is unaffected. Voice-cued punches (see voice_punch.py) pass
+    their own declared angle here instead; apply_safety_limits() in
+    track_interpolation.py still clamps the result to track.YAW_SAFE_FLOOR
+    regardless of what's requested, so a mis-heard or reckless angle can't
+    bypass the mechanical safety floor - this parameter changes the
+    animation's target, not the safety limit.
 
     Written as a pure function of elapsed time (not a sleep-loop) so the
     live tracker can query "what should yaw/elbow be right now" once per
@@ -135,20 +142,22 @@ def hook_animation_frame(elapsed_ms, start_yaw=None):
     the whole time the hook animation is playing."""
     if start_yaw is None:
         start_yaw = STRIKE_START_YAW
+    if target_yaw is None:
+        target_yaw = STRIKE_END_YAW
 
-    distance = abs(STRIKE_END_YAW - start_yaw)
+    distance = abs(target_yaw - start_yaw)
     strike_duration_ms = max(distance / STRIKE_SPEED_DEG_PER_SEC * 1000.0, MIN_STRIKE_DURATION_MS)
 
     if elapsed_ms < strike_duration_ms:
         t = elapsed_ms / strike_duration_ms
-        yaw = start_yaw + (STRIKE_END_YAW - start_yaw) * ease_in_cubic(t)
+        yaw = start_yaw + (target_yaw - start_yaw) * ease_in_cubic(t)
         return yaw, FIXED_ELBOW, False
 
     elapsed_ms -= strike_duration_ms
     if elapsed_ms < HOLD_DURATION_MS:
-        return STRIKE_END_YAW, FIXED_ELBOW, False
+        return target_yaw, FIXED_ELBOW, False
 
-    return STRIKE_END_YAW, FIXED_ELBOW, True
+    return target_yaw, FIXED_ELBOW, True
 
 
 def play_hook_animation(ser):

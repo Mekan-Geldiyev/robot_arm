@@ -4,3 +4,9 @@
 opencv-python==5.0.0.93
 mediapipe==0.10.35
 pyserial==3.5
+
+# Voice-cued punch selection (interpolation_approach/voice_punch.py) - same
+# versions as the BackTPal project this stack was reused from.
+vosk==0.3.45
+PyAudio==0.2.14
+requests==2.32.3
