@@ -183,13 +183,75 @@ that - not a dependency for a working demo. See the README's "Known
 limitations & open questions" section for the fuller, reviewer-facing
 version of this list.
 
+## The 270-degree rebuild (as of 2026-10-20)
+
+Same repo, deliberately separate files, not a separate build of the
+original ones - the 180-degree hardware above stays a clean, working
+fallback in case the 270-degree parts/print don't come together in time.
+Every 270-specific file has a `_270` suffix and imports/references only
+other `_270` files, never touching `track.py`, `track_interpolation.py`,
+`calibration_data.json`, or `robot_arm.ino`:
+- `robot_arm_270/robot_arm_270.ino` - firmware, 0-270 range (not 180)
+- `interpolation_approach/positions_270.py` - the 16-pose reference set
+  and real confirmed channel centering for this build (pan=145, tilt=120,
+  yaw=70, elbow=135 - not assumed, physically verified)
+- `interpolation_approach/hook_animation_270.py` - standalone hook
+  animation test, not yet wired into live detection
+- `interpolation_approach/track_interpolation_270.py` - the live
+  mirroring system for this hardware; loads
+  `interpolation_implement/calibration_data_270.json` specifically (not
+  `calibration_data.json`)
+
+`calibration_data_270.json` was built by reusing the ORIGINAL 180-degree
+build's raw MediaPipe readings (those are about the user's body, unchanged
+by the servo swap) paired with freshly hand-jogged servo values - caught
+and fixed one real bug this way: `HAND_OUT_CENTER` (reaching forward) and
+the T-pose had been silently merged into one entry during the first
+rebuild, which is exactly the kind of mistake this pairing approach is
+prone to if a raw value gets reused for the wrong named pose - double
+check the pose NAME still matches the raw reading's actual real-world
+pose, not just that a raw value exists.
+
+`PUNCH_DETECTION_ENABLED` (top of `track_interpolation_270.py`) is
+currently `False` - pure live mirroring only, hook/voice-cued detection
+fully disabled. Flip it back to `True` to re-enable; nothing else needs
+touching. Also added a real hold-time requirement (`HOLD_TIME_SEC=2.0`)
+on top of `SNAP_DISTANCE`/`SNAP_MARGIN` - the same point now has to stay
+the confident nearest match continuously for 2 full seconds before
+locking, not just for one frame, which was causing flicker on jittery
+readings near the snap boundary even while holding still.
+
+**Open issue, not yet root-caused**: moving quickly from `HAND_OUT_SIDE`
+toward `HAND_DOWN` (a 77-degree tilt swing) shows a real lag - the arm
+appears to pause for 2-3 seconds partway through, then catches up to
+`HAND_DOWN` 5-6 seconds after the real motion already happened. Checked
+the IDW blend path with a straight-line simulation between the two points
+and it transitions smoothly (`HAND_OUT_SIDE` -> `HAND_LEFT_DOWN` ->
+`HAND_DOWN`, no flat spot, never gets near `SNAP_DISTANCE`) - so probably
+NOT the interpolation math itself, though real human motion isn't a
+straight line in raw-value space so this isn't fully ruled out. Best
+current guess: the raw-signal OneEuroFilter's lag on a large, fast tilt
+swing specifically (77 degrees is a lot to track smoothly) - this would
+produce exactly this symptom, the output slowly catching up to where the
+arm already was well after the real motion stopped, which looks like a
+freeze-then-jump from the outside even though nothing is literally frozen.
+Next diagnostic step, not yet done: log raw vs. smoothed tilt and the
+chosen nearest-neighbor name every frame during a real `HAND_OUT_SIDE` ->
+`HAND_DOWN` motion, to see directly which stage is actually lagging
+instead of guessing further.
+
 ## Running it
 
 ```
 pip install -r requirements.txt
-python track.py                                    # formula-based approach
-python interpolation_approach/track_interpolation.py  # interpolation-based approach
+python track.py                                        # formula-based, 180-degree
+python interpolation_approach/track_interpolation.py      # interpolation-based, 180-degree
+python interpolation_approach/track_interpolation_270.py  # interpolation-based, 270-degree build
 ```
 
-Upload `robot_arm.ino` to the Arduino first. `SERIAL_PORT` in `track.py`
-(shared by both scripts) needs to match the Arduino's actual COM port.
+Upload `robot_arm.ino` (180-degree) or `robot_arm_270/robot_arm_270.ino`
+(270-degree) to the Arduino depending on which hardware is actually
+plugged in - uploading the wrong one for the physically-connected servos
+is a real, easy-to-make mistake, not just a config error. `SERIAL_PORT` in
+`track.py` (shared by everything above) needs to match the Arduino's
+actual COM port either way.

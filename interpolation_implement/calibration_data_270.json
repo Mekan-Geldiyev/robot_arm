@@ -1,0 +1,52 @@
+{
+  "_NOTE": "Rebuilt 2026-10-20 for the 270-degree servo build (see CLAUDE.md). The 'mediapipe' (raw) value in each entry is REUSED UNCHANGED from the original 180-degree build's calibration_data.json - that reading is about the user's own body as seen by the camera, which didn't change; only the robot's servos did. Only 'servo' values are new, hand-jogged on robot_arm_270.ino and read back via the Serial Monitor 'print' command. The old build's HOOK_WINDUP/HOOK_MID_1/HOOK_MID_2/HOOK_EXTENSION/BOXING_JAB disabled entries were NOT carried forward - those were specific to the old live-tracked-hook attempt this project already moved away from in favor of a scripted hook animation (see hook_animation_270.py), so they're dead weight here rather than history worth preserving a second time.",
+  "_removed": {
+    "ELBOW_BENT_REST": "Originally removed 2026-08-23 on the old hardware because pan/tilt hit a mechanical hard-stop before reaching the true guard position - worth reconsidering now that the servo range is 0-270 instead of 0-180, since that specific hard-stop may no longer apply. Not re-added yet because no fresh raw+servo pair has been captured for it on this build."
+  },
+  "calibration_positions": {
+    "HAND_OUT_CENTER": {
+      "mediapipe": [170, -8, 0, 180],
+      "servo": [150, 120, 70, 135],
+      "note": "Hand reaching straight out in FRONT, toward the camera - NOT the T-pose (that's HAND_OUT_SIDE below). Raw value is the average of 2 clean captures ([170,-6,0,180] and [171,-9,0,179], both near-zero std) out of 4 total - the other 2 ([169,-6,-5,175], [170,-5,-10,172]) reflected an intentional slight lean to the left (so the camera could see more than just the arm), not noise, so they were excluded as a genuinely different pose rather than averaged in. Still the least reliable direction for a single webcam (toward/away from camera) even on a clean capture - don't expect this one to track as precisely as the side-ways poses."
+    },
+    "HAND_OUT_SIDE": {
+      "mediapipe": [129, -6, -52, 131],
+      "servo": [145, 120, 180, 135],
+      "note": "Straight out to the side, T-pose, elbow straight - position #2 in the reference list. Raw value re-captured live via capture_point.py on this build (std 1.19/0.01/0.53/4.37 - stable). A second capture of the same pose came back [123,-8,-51,89]; this one (the later, more deliberate attempt) was used."
+    },
+    "HAND_DOWN": {
+      "mediapipe": [177, -83, -19, 115],
+      "servo": [145, 220, 180, 135],
+      "note": "Elbow raw is 115, not near the ~180 a fully-straight hanging arm should read - this is about MediaPipe's z-depth reliability (the camera/pose side), unchanged from the old hardware. Don't expect this number to change no matter how carefully it's re-recorded."
+    },
+    "HAND_LEFT_UP": {
+      "mediapipe": [128, 21, -61, 155],
+      "servo": [110, 120, 70, 135]
+    },
+    "HAND_LEFT_MIDDLE": {
+      "mediapipe": [115, -1, -55, 139],
+      "servo": [145, 120, 30, 135]
+    },
+    "HAND_LEFT_DOWN": {
+      "mediapipe": [176, -50, -50, 141],
+      "servo": [200, 120, 70, 135]
+    },
+    "HAND_UP_LEFT_DIAGONAL": {
+      "mediapipe": [146, 37, 0, 122],
+      "servo": [90, 120, 70, 135]
+    },
+    "BOXING_HOOK_SETUP": {
+      "mediapipe": [174, -9, -30, 158],
+      "servo": [145, 135, 200, 15],
+      "note": "Hand-at-ear, elbow bent tight - hook windup. Raw value is the average of 5 fresh captures, all 5 independently flagged high-variance on yaw (std 10.7-20.7) and elbow (std 10.4-18.4) - a consistent pattern across every attempt, not a one-off fluke, confirming MediaPipe's elbow-plane geometry genuinely can't resolve this pose precisely when the wrist is this close to the head. Averaging all 5 gives the best available center estimate, but don't expect live tracking on this one to feel as precise as the side-ways poses - and since hooks are thrown via the separate scripted animation (hook_animation_270.py) rather than live-tracked through this entry, its job here is mainly to not actively confuse nearby poses (see HAND_OUT_CENTER), not to track a real hook precisely."
+    },
+    "HAND_FORWARD_LOW": {
+      "mediapipe": [161, -74, -35, 43],
+      "servo": [169, 120, 70, 135]
+    },
+    "HAND_LEFT_EXTENDED": {
+      "mediapipe": [115, -2, -50, 112],
+      "servo": [145, 120, 180, 135]
+    }
+  }
+}
