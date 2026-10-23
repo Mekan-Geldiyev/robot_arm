@@ -54,9 +54,8 @@ if _PARENT_DIR not in sys.path:
     sys.path.insert(0, _PARENT_DIR)
 
 import track  # noqa: E402  (import after sys.path setup, intentional)
-import hook_animation_test  # noqa: E402
-import punch_angle_test  # noqa: E402
-import voice_punch  # noqa: E402
+import punch_angle_270  # noqa: E402
+import voice_punch_270  # noqa: E402
 from punch_classifier import PunchClassifier, LABEL_COLORS  # noqa: E402
 
 # ==================== TUNABLE SETTINGS ====================
@@ -70,15 +69,28 @@ from punch_classifier import PunchClassifier, LABEL_COLORS  # noqa: E402
 # other now that both live in this one repo.
 CALIBRATION_DATA_PATH = os.path.join(_PARENT_DIR, "interpolation_implement", "calibration_data_270.json")
 
-# Flip to True to re-enable hook auto-detection and voice/text-cued
-# punches - False means pure live mirroring only, nothing ever overrides
-# pan/tilt/yaw/elbow away from what the camera sees. Single switch: when
-# False, punch_classifier.update() never even gets called below, so
-# neither the automatic hook path nor the voice-cued path can fire -
-# everything downstream of that (hook_start_time, punch_anim_start_time,
-# the animating/punch_animating blocks) just never triggers, no other
-# code needs touching to turn this back on.
-PUNCH_DETECTION_ENABLED = False
+# Flip to False to go back to pure live mirroring only, nothing ever
+# overrides pan/tilt/yaw/elbow away from what the camera sees. Single
+# switch: when False, punch_classifier.update() never even gets called
+# below, so neither automatic nor voice-cued punches can fire -
+# everything downstream of that (punch_anim_start_time, the
+# punch_animating block) just never triggers, no other code needs
+# touching to turn this back off.
+PUNCH_DETECTION_ENABLED = True
+
+# Overrides track.TILT_BETA (0.03) for this build only - NOT changed in
+# track.py itself, since that file is shared with the 180-degree build and
+# this is specifically about a 270-degree symptom (see CLAUDE.md's
+# HAND_OUT_SIDE -> HAND_DOWN lag note). BETA controls how fast filtering
+# loosens up as speed increases - 0.03 is the same value pan/yaw use,
+# untuned for tilt's specific case of a large (77 degree), fast swing.
+# track.ELBOW_BETA was raised to 0.10 for an analogous "needs to react
+# faster" reason (different root cause - noise amplification, not a slow
+# large swing - but the same parameter). First guess, not yet confirmed -
+# watch the true_raw_tilt vs smoothed gap in the per-frame log during a
+# real HAND_OUT_SIDE -> HAND_DOWN motion; tune further from what that
+# actually shows rather than assuming this value is already right.
+TILT_BETA_270 = 0.08
 
 # This build's real servo range - must match ANGLE_MAX in robot_arm_270.ino
 # (270, not the old 180-degree hardware's range). Used both to validate
@@ -430,7 +442,7 @@ def main():
     last_send_time = 0.0
 
     pan_filter = track.OneEuroFilter(track.PAN_MIN_CUTOFF, track.PAN_BETA, track.D_CUTOFF)
-    tilt_filter = track.OneEuroFilter(track.TILT_MIN_CUTOFF, track.TILT_BETA, track.D_CUTOFF)
+    tilt_filter = track.OneEuroFilter(track.TILT_MIN_CUTOFF, TILT_BETA_270, track.D_CUTOFF)  # see TILT_BETA_270 above
     yaw_filter = track.OneEuroFilter(track.YAW_MIN_CUTOFF, track.YAW_BETA, track.D_CUTOFF)
     elbow_filter = track.OneEuroFilter(track.ELBOW_MIN_CUTOFF, track.ELBOW_BETA, track.D_CUTOFF)
 
@@ -448,39 +460,39 @@ def main():
     start_time = time.monotonic()
 
     # Punch classification (hook / uppercut / unclassified punch) - see
-    # punch_classifier.py. Two SEPARATE animation paths exist, and only one
-    # runs on any given frame:
-    #   - Automatic (no voice command pending): only "hook" triggers
-    #     hook_animation_test.py, exactly as before voice was added - yaw
-    #     /elbow scripted, pan/tilt stay live. This path is untouched by
-    #     the voice integration below on purpose (it's already tuned/
-    #     verified - see the double-dip fix history in CLAUDE.md).
-    #   - Voice-cued (see voice_punch.py): ANY of the 4 named punches
-    #     (punch_angle_test.PUNCH_TILTS - Uppercut/High Overhand/Overhand/
-    #     Hook) gets the fuller punch_angle_test.py animation instead -
-    #     tilt/yaw/elbow all scripted, only pan stays live. This includes
-    #     voice-cued "hook", which now also drives tilt to 90 explicitly
-    #     rather than leaving it live like the automatic path does - hook
-    #     is formally part of this family now, so it gets the family's
-    #     full treatment when you name it, not the older partial one.
+    # punch_classifier.py. ONE animation path now (unlike the 180-degree
+    # build, which kept automatic-hook and voice-cued as two separate
+    # mechanisms) - every trigger, voice or automatic, plays the same full
+    # punch_angle_270.punch_animation_frame() (pan/tilt/yaw/elbow fully
+    # scripted, except pan is deliberately discarded below and kept live -
+    # see the comment where it's applied). Priority each time a strike is
+    # detected:
+    #   1. A pending voice/text-logged tilt (voice_punch_270.py) - wins if
+    #      present, maps to whichever of the 4 PUNCHES it snapped to.
+    #   2. No pending tilt: fall back to the classifier's own geometric
+    #      guess - "hook" plays PUNCHES["4"] (Hook), "uppercut" plays
+    #      PUNCHES["1"] (Uppercut). Unclassified "punch" does nothing
+    #      special, same as before.
     punch_classifier = PunchClassifier()
-    hook_start_time = None
-    hook_start_yaw = None  # yaw's ACTUAL value at the moment a hook was auto-detected -
-                            # the strike animates from here, not a fixed guard pose
 
     punch_anim_start_time = None
-    punch_anim_start_tilt = None
-    punch_anim_start_yaw = None
-    punch_anim_target_tilt = None
-    punch_anim_target_yaw = None
+    punch_anim_start_pos = None   # (pan, tilt, yaw, elbow) - wherever live tracking
+                                   # actually was the instant the strike was detected,
+                                   # NOT a fixed/hardcoded start - forcing a fixed start
+                                   # here was tried and reverted on the 180-degree build
+                                   # (the "cocks back to load the hook" bug, see
+                                   # hook_animation_test.py's STRIKE_START_YAW history) -
+                                   # don't reintroduce that mistake.
+    punch_anim_target_pos = None  # (pan, tilt, yaw, elbow) - the resolved punch's full position
+    punch_anim_pan_swing = 0.0    # degrees - PAN_SWING_BY_KEY.get(key, 0.0), 0 for everything but Uppercut
 
-    # Voice-cued punch selection (see voice_punch.py + CLAUDE.md's "Current
-    # direction") - name the punch before throwing instead of guessing
-    # type from ambiguous vision. Runs in its own thread; only consumed
-    # (pop_next_punch()) right when punch_classifier's speed/travel gate
-    # actually fires below, never every frame, so an unrelated later
-    # motion can't accidentally consume a stale voice command.
-    voice_listener = voice_punch.create_listener()  # voice_punch.INPUT_MODE picks voice vs. typed
+    # Voice/text-cued tilt selection (voice_punch_270.py) - say/type a
+    # number before throwing instead of relying on the classifier's guess.
+    # Runs in its own thread; only consumed (pop_next_tilt()) right when
+    # punch_classifier's speed/travel gate actually fires below, never
+    # every frame, so an unrelated later motion can't accidentally consume
+    # a stale logged tilt.
+    voice_listener = voice_punch_270.create_listener()  # voice_punch_270.INPUT_MODE picks voice vs. typed
     voice_listener.start()
 
     punch_flash_label = ""
@@ -576,37 +588,54 @@ def main():
             punch_classifier.update(shoulder, wrist, other_shoulder, raw_yaw, raw_elbow, frame_time)
             if PUNCH_DETECTION_ENABLED else None
         )
-        start_hook_this_frame = False
-        start_voice_punch_this_frame = False
-        voice_punch_target = None  # (tilt, yaw) captured below if a voice command fires this frame
+        start_punch_this_frame = False
+        punch_target_pos = None  # (pan, tilt, yaw, elbow) resolved below if a punch fires this frame
+        punch_target_pan_swing = 0.0
         if punch_result:
             # A strike happened (the gate above already confirmed that) -
-            # if a voice command is pending, trust its declared punch over
-            # the classifier's own geometric guess instead of just
-            # displaying both. Only consumed here, not every frame, so an
-            # unrelated later motion can't burn a stale command (see
-            # PENDING_EXPIRY_SEC in voice_punch.py).
-            voice_punch_cmd = voice_listener.pop_next_punch()
-            effective_type = voice_punch_cmd["type"] if voice_punch_cmd else punch_result["type"]
+            # a pending voice/text tilt wins if present; otherwise fall
+            # back to the classifier's own type guess. Consumed only here,
+            # not every frame, so an unrelated later motion can't burn a
+            # stale logged tilt (see PENDING_EXPIRY_SEC in
+            # voice_punch_270.py).
+            voice_tilt_cmd = voice_listener.pop_next_tilt()
+            if voice_tilt_cmd:
+                resolved_key = voice_tilt_cmd["key"]
+            elif punch_result["type"] == "hook":
+                resolved_key = "4"
+            else:
+                # Anything that's not a hook defaults to Uppercut -
+                # punch_classifier.py can't tell a jab apart from an
+                # uppercut (both read as a fast, roughly-vertical motion
+                # with no strong yaw signal - this is a real geometric
+                # ambiguity, not a bug, same category as the wide-hook-vs-
+                # reach limit documented for the 180-degree build), and
+                # there's no jab animation yet. Defaulting unclassified
+                # "punch" to Uppercut too (not just the classifier's own
+                # "uppercut" guess) means every non-hook fast motion plays
+                # SOMETHING reasonable instead of nothing, until a real jab
+                # animation exists to split this properly.
+                resolved_key = "1"
+            effective_label, resolved_target = punch_angle_270.PUNCHES[resolved_key]
+            # PAN_SWING_BY_KEY is Uppercut-only (confirmed in
+            # punch_angle_270.py's own standalone test before being wired
+            # here) - every other key is 0, meaning pan keeps getting
+            # discarded/kept live below exactly as before.
+            resolved_pan_swing = punch_angle_270.PAN_SWING_BY_KEY.get(resolved_key, 0.0)
 
-            punch_flash_label = effective_type.upper()
+            punch_flash_label = (effective_label or punch_result["type"]).upper()
             punch_flash_until = frame_time + 1.0
             yaw_str = f"{punch_result['yaw']:.1f}" if punch_result["yaw"] is not None else "n/a"
             print(f"\n>>> {punch_flash_label} (speed={punch_result['speed']:.2f} "
                   f"travel={punch_result['travel']:.2f} yaw={yaw_str})")
 
-            if voice_punch_cmd and punch_anim_start_time is None:
-                # Any of the 4 named punches now has a real tilt+yaw target
-                # (punch_angle_test.PUNCH_TILTS), so all 4 get the fuller
-                # animation - not just hook like before. Don't grab
-                # start_tilt/start_yaw here - this frame's live tilt_f/
-                # yaw_f haven't been computed yet (that happens below).
-                start_voice_punch_this_frame = True
-                voice_punch_target = (voice_punch_cmd["tilt"], voice_punch_cmd["yaw"])
-            elif effective_type == "hook" and hook_start_time is None:
-                # No voice command pending - fall back to the original
-                # automatic detection path exactly as before.
-                start_hook_this_frame = True
+            if punch_anim_start_time is None:
+                # Don't grab the live start position here - this frame's
+                # pan_f/tilt_f/yaw_f/elbow_f haven't been computed yet
+                # (that happens below). Just flag it.
+                start_punch_this_frame = True
+                punch_target_pos = resolved_target
+                punch_target_pan_swing = resolved_pan_swing
 
         smooth_pan = pan_filter(frame_time, raw_pan)
         smooth_tilt = tilt_filter(frame_time, raw_tilt)
@@ -619,64 +648,41 @@ def main():
         servo_vec, used = mapper.interpolate(query, frame_time)
         pan_f, tilt_f, yaw_f, elbow_f = apply_safety_limits(servo_vec)
 
-        if start_hook_this_frame:
-            hook_start_time = frame_time
-            hook_start_yaw = yaw_f  # wherever live tracking actually has yaw right now
-            print(">>> Playing hook animation (auto-detected), pan/tilt still live\n")
-
-        if start_voice_punch_this_frame:
+        if start_punch_this_frame:
             punch_anim_start_time = frame_time
-            punch_anim_start_tilt = tilt_f
-            punch_anim_start_yaw = yaw_f
-            punch_anim_target_tilt, punch_anim_target_yaw = voice_punch_target
-            print(f">>> Playing {punch_flash_label} animation (voice-cued), pan still live\n")
+            punch_anim_start_pos = (pan_f, tilt_f, yaw_f, elbow_f)  # real live values, not a fixed start
+            punch_anim_target_pos = punch_target_pos
+            punch_anim_pan_swing = punch_target_pan_swing
+            print(f">>> Playing {punch_flash_label} animation, "
+                  f"{'pan swings too' if punch_anim_pan_swing else 'pan still live'}\n")
 
-        # Automatic path: yaw/elbow come from the scripted curve instead of
-        # live interpolation - pan/tilt (already computed above from live
-        # tracking) are untouched either way. This is the hybrid: the two
-        # channels proven unstable during a real hook get a verified
-        # animation, everything else keeps mirroring you live.
-        animating = hook_start_time is not None
-        if animating:
-            elapsed_ms = (frame_time - hook_start_time) * 1000.0
-            anim_yaw, anim_elbow, finished = hook_animation_test.hook_animation_frame(
-                elapsed_ms, start_yaw=hook_start_yaw
-            )
-            _, _, yaw_f, elbow_f = apply_safety_limits((pan_f, tilt_f, anim_yaw, anim_elbow))
-            if finished:
-                hook_start_time = None
-                animating = False
-                # Restart the classifier's cooldown from NOW, not from the
-                # original detection instant. Otherwise, for animations
-                # that take longer than HOOK_COOLDOWN_SEC to play out
-                # (starting far from the target - e.g. near guard, ~400ms
-                # total vs a 350ms cooldown), the cooldown expires before
-                # the animation even finishes. Your real arm is almost
-                # always still snapping back fast at that exact moment,
-                # which looks like a second hook to the classifier (same
-                # shape, reversed direction - it doesn't check sign) -
-                # that's the "double dip" / short second hook. Re-arming
-                # here gives a full fresh cooldown for the retraction to
-                # settle before anything can fire again.
-                punch_classifier.last_punch_at = frame_time
-                print(">>> Hook animation complete - resuming live yaw/elbow tracking")
-
-        # Voice-cued path: tilt/yaw/elbow all come from the scripted curve
-        # (punch_angle_test.punch_animation_frame - reposition tilt, then
-        # strike) - only pan stays live. Same cooldown re-arming as the
-        # automatic path above, for the same double-dip reason.
+        # tilt/yaw/elbow always come from the scripted curve
+        # (punch_angle_270.punch_animation_frame - reposition, then
+        # strike). pan only comes from it too when punch_anim_pan_swing is
+        # non-zero (Uppercut, confirmed good in punch_angle_270.py's own
+        # standalone test before being wired here) - for every other
+        # punch the animated pan is discarded and pan_f (already computed
+        # above from live tracking) is kept instead, same as before this
+        # existed. Same cooldown re-arming as the 180-degree build, for
+        # the same double-dip reason (see that build's CLAUDE.md).
         punch_animating = punch_anim_start_time is not None
         if punch_animating:
             elapsed_ms = (frame_time - punch_anim_start_time) * 1000.0
-            anim_tilt, anim_yaw, anim_elbow, finished = punch_angle_test.punch_animation_frame(
-                elapsed_ms,
-                start_tilt=punch_anim_start_tilt, target_tilt=punch_anim_target_tilt,
-                start_yaw=punch_anim_start_yaw, target_yaw=punch_anim_target_yaw,
+            anim_pan, anim_tilt, anim_yaw, anim_elbow, finished = punch_angle_270.punch_animation_frame(
+                elapsed_ms, start_pos=punch_anim_start_pos, target_pos=punch_anim_target_pos,
+                pan_swing_deg=punch_anim_pan_swing,
             )
-            pan_f, tilt_f, yaw_f, elbow_f = apply_safety_limits((pan_f, anim_tilt, anim_yaw, anim_elbow))
+            used_pan = anim_pan if punch_anim_pan_swing else pan_f
+            pan_f, tilt_f, yaw_f, elbow_f = apply_safety_limits((used_pan, anim_tilt, anim_yaw, anim_elbow))
             if finished:
                 punch_anim_start_time = None
                 punch_animating = False
+                punch_anim_pan_swing = 0.0
+                # Restart the classifier's cooldown from NOW, not from the
+                # original detection instant - otherwise a real arm
+                # retraction right after the animation (which often
+                # outlasts the cooldown) reads as a second punch. Same
+                # "double-dip" fix as the 180-degree build.
                 punch_classifier.last_punch_at = frame_time
                 print(">>> Punch animation complete - resuming live tracking")
 
@@ -685,16 +691,19 @@ def main():
         # set changes, which raw-signal smoothing alone can't reach. BUT
         # skip it when snapped (len(used)==1, see SNAP_DISTANCE) - that
         # value is already a confident, verified calibration match, not
-        # noise to smooth away - and skip it on any channel a scripted
-        # curve currently owns, for the same reason: it isn't noise either,
-        # and smoothing it would just add lag on top of carefully-tuned
-        # timing (see apply_output_filter()). tilt is only ever scripted by
-        # the voice-cued path - the automatic path always leaves it live.
+        # noise to smooth away - and skip it on tilt/yaw/elbow while the
+        # punch animation owns them, for the same reason: it isn't noise
+        # either, and smoothing it would just add lag on top of carefully-
+        # tuned timing (see apply_output_filter()). pan only needs the
+        # same bypass while it's ACTUALLY being scripted (Uppercut's swing
+        # - punch_anim_pan_swing nonzero) - for every other punch pan stays
+        # live and gets normal smoothing like any other live motion.
         snapped = len(used) == 1
-        pan_f = apply_output_filter(out_pan_filter, frame_time, pan_f, snapped)
+        pan_scripted = punch_animating and bool(punch_anim_pan_swing)
+        pan_f = apply_output_filter(out_pan_filter, frame_time, pan_f, snapped or pan_scripted)
         tilt_f = apply_output_filter(out_tilt_filter, frame_time, tilt_f, snapped or punch_animating)
-        yaw_f = apply_output_filter(out_yaw_filter, frame_time, yaw_f, snapped or animating or punch_animating)
-        elbow_f = apply_output_filter(out_elbow_filter, frame_time, elbow_f, snapped or animating or punch_animating)
+        yaw_f = apply_output_filter(out_yaw_filter, frame_time, yaw_f, snapped or punch_animating)
+        elbow_f = apply_output_filter(out_elbow_filter, frame_time, elbow_f, snapped or punch_animating)
 
         pan, tilt, yaw, elbow_out = int(pan_f), int(tilt_f), int(yaw_f), int(elbow_f)
 
@@ -703,8 +712,17 @@ def main():
         nearest_dist = used[0][2] if used else float("inf")
         low_confidence = nearest_dist > LOW_CONFIDENCE_DISTANCE
         confidence_flag = " [LOW CONFIDENCE - no nearby calibration point]" if low_confidence else ""
+        # NOTE: the old "raw=" label here was wrong - those were already
+        # SMOOTHED (post-filter) values, not the true raw MediaPipe
+        # reading, which made it impossible to tell filter lag apart from
+        # anything else just by reading this line. raw_tilt (true,
+        # pre-filter) is added specifically to diagnose the HAND_OUT_SIDE
+        # -> HAND_DOWN lag (see CLAUDE.md) - if raw_tilt swings fast but
+        # smooth_tilt trails far behind it for a couple seconds, that's
+        # the OneEuroFilter lagging, not the interpolation/blend stage.
         print(
-            f"[side {side_label}] raw=[{smooth_pan:6.1f},{smooth_tilt:6.1f},{smooth_yaw:6.1f},{smooth_elbow:6.1f}] "
+            f"[side {side_label}] true_raw_tilt={raw_tilt:6.1f}  "
+            f"smoothed=[{smooth_pan:6.1f},{smooth_tilt:6.1f},{smooth_yaw:6.1f},{smooth_elbow:6.1f}] "
             f"-> {neighbors_str} -> servo: pan={pan:3d} tilt={tilt:3d} yaw={yaw:3d} elbow={elbow_out:3d}{confidence_flag}"
         )
 
@@ -734,9 +752,9 @@ def main():
                 frame, "LOW CONFIDENCE - no nearby calibration point", (10, 55),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 140, 255), 2,
             )
-        if animating:
+        if punch_animating:
             cv2.putText(
-                frame, "HOOK ANIMATION PLAYING (yaw/elbow scripted)", (10, 80),
+                frame, "PUNCH ANIMATION PLAYING (tilt/yaw/elbow scripted)", (10, 80),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2,
             )
 

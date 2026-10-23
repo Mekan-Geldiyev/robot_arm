@@ -46,12 +46,17 @@ FIXED_PAN, FIXED_TILT, _HOOK_YAW, FIXED_ELBOW = POSITIONS["HOOK"]
 # STRIKE_START_YAW used to be a hardcoded animation start on the old
 # hardware. Kept here only as the standalone test's default (no live
 # tracking to grab a real value from) - the real integration later passes
-# wherever yaw actually is at the moment a hook is detected, same as
-# before, so there's no artificial windup.
-STRIKE_START_YAW = _HOOK_YAW    # 70 on this build - the real "Hook" reference yaw
+# wherever yaw actually is at the moment a hook is detected, so there's no
+# artificial windup THEN. For THIS standalone test though, starting from
+# Hook's own narrow ready yaw (70) made the swing too subtle to see
+# clearly (only 40 degrees of travel) - 180 instead simulates a more
+# realistic live starting point (matches REST_GUARD/HAND_OUT_SIDE's own
+# yaw, not an arbitrary number) and gives a much more visible 150-degree
+# swing.
+STRIKE_START_YAW = 180          # was _HOOK_YAW (70) - too narrow to see clearly standalone
 STRIKE_END_YAW = 30             # see SAFETY above - untested first guess, confirm standalone
 
-STRIKE_SPEED_DEG_PER_SEC = 450   # same feel as the original hook animation
+STRIKE_SPEED_DEG_PER_SEC = 450 * 1.25  # 1.25x per request - bigger swing stays snappy, not slower
 MIN_STRIKE_DURATION_MS = 80
 HOLD_DURATION_MS = 120          # brief pause at extension before handing back to live tracking
 SEND_INTERVAL_MS = 20           # how often to send an updated yaw during the animation
