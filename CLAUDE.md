@@ -240,6 +240,99 @@ chosen nearest-neighbor name every frame during a real `HAND_OUT_SIDE` ->
 `HAND_DOWN` motion, to see directly which stage is actually lagging
 instead of guessing further.
 
+## Wrist IMU punch detector (new chapter, started 2026-10-29)
+
+A GY-521/MPU-6050 taped to the user's left wrist brace, read over I2C on
+the SAME Uno as the PCA9685 (shares A4/SDA, A5/SCL - two different I2C
+addresses, 0x68 vs 0x40, coexist fine on one bus). This is not a second
+Arduino; the plan is to eventually fold its setup()/loop() into
+`robot_arm_270.ino`'s own setup()/loop() once it's proven out standalone.
+**Why this exists**: the camera/MediaPipe pipeline is too slow/laggy to
+catch a fast punch in time - the IMU is meant to be a faster trigger, not
+just a more decisive one (an open question, not yet confirmed either way
+- current priority is getting type classification right first, see below).
+
+Files, same "keep the simpler known-good file standing" pattern as
+`hook_animation_test.py`/`punch_angle_test.py`:
+- `imu_punch_test.ino` - first version, spike-only (magnitude above a
+  threshold = "PUNCH"), no type classification. Has a known, not-fixed-
+  there baseline bug: it subtracts the full calibration vector (gravity
+  included) from every accel axis, then subtracts another 1g from the
+  magnitude, double-cancelling gravity - resting baseline actually sits
+  at ~-1g, not ~0. Didn't block spike detection (real punches are huge
+  relative to either baseline) but don't trust "still reads 0" in this
+  file literally.
+- `imu_punch_classify_test.ino` - current/active file. Adds hook vs
+  uppercut vs low-rotation "punch" (straight) classification plus a
+  diagnostic swing angle, fixes the baseline bug above (uses the
+  calibration vector's measured length, `restMag`, instead of a
+  hardcoded 1.0g), and prints `PUNCH,<type>,<angle_deg>,<ms_to_recognize>,
+  <verticality>,<peak_gyro_dps>` per punch - CSV, matching this repo's
+  existing serial-protocol convention. Type vocabulary ("hook"/
+  "uppercut"/"punch") deliberately matches `punch_classifier.py`'s own
+  strings for an eventual merge.
+
+**Classifier model**: calibration (holding the wrist still) captures the
+raw accel vector as `refUp` - a unit vector meaning "which way is up, in
+this sensor's own local axes, as mounted on this wrist, in whatever pose
+it was calibrated in." A hook swings through a roughly horizontal arc, so
+by the right-hand rule its angular velocity vector points roughly
+*parallel* to `refUp`; an uppercut swings vertically, so its angular
+velocity points roughly *perpendicular* to `refUp`. `VERTICALITY_THRESHOLD`
+and `GYRO_MIN_FOR_ROTATION_DPS` are the tunable cutoffs - still being
+tuned as of this writing, not yet confirmed against real throws.
+
+**Calibration pose is now standardized: arm straight out in front
+(center), held still through the ~4s calibration window right after
+reset/upload.** This was explicitly chosen for repeatability, not boxing
+realism - it's easy to return to the exact same arm position every time,
+unlike a guard stance where elbow/wrist angle varies subtly run to run.
+This matters a lot here: `refUp` is only as good as the pose held during
+THAT calibration, and an inconsistent calibration pose was confirmed to
+flip which punch type the classifier is biased toward between sessions
+(one session biased everything toward "hook," the next toward "uppercut,"
+with no code change in between) - calibrate the same way, every time, or
+the threshold tuning below won't hold across sessions.
+
+**Root cause found (2026-10-29, user's own diagnostic): forearm ROLL, not
+swing plane, was driving the result.** Two rounds of gyro-verticality
+(projecting gyro onto refUp, first at the peak-accel instant, then at the
+true peak-gyro instant) both failed - every real throw, regardless of
+intended type, landed at nearly the same extreme verticality. The user
+then tested directly: same uppercut motion, palm up vs. palm down (pure
+forearm rotation, not a different swing) - got "hook" one way,
+"uppercut" the other. `refUp` was frozen at one-time startup calibration,
+so it goes stale the instant the wrist's rest orientation differs from
+power-on time - rotating the forearm about its own long axis spins the
+sensor's local axes relative to gravity even though the real-world swing
+arc is unchanged. This directly mirrors the already-documented camera-
+side limitation above ("Yaw is not palm/wrist roll... MediaPipe can't see
+forearm twist") - same anatomical DOF, opposite failure mode (the wrist
+IMU is too sensitive to roll, where the camera is blind to it). Confirmed
+via photo that the physical mounting itself (GY-521 rigidly taped to the
+dorsal side of the wrist brace) is fine - purely an algorithm problem.
+
+**Fix**: `refUp` is now continuously adaptive, not a one-shot startup
+calibration - while idle (never during a capture window), it slowly
+drifts toward the current accel reading each loop tick
+(`REFUP_ADAPT_RATE`), so each punch is judged against whatever
+orientation the wrist is actually resting in right before THAT throw.
+Classification also switched from gyro-verticality to `angleDeg` (accel-
+direction vs refUp) after the verticality approach failed twice: a hook's
+net strike acceleration should point roughly across the body
+(`ANGLE_HOOK_MIN_DEG`, currently 60), an uppercut's roughly up it. Not
+yet retested - next step is repeating the user's own palm-up/palm-down
+A/B test and checking the now-printed live `refUp` values actually
+tracked the change.
+
+**Two-phase plan**: (1) get hook/uppercut/punch type classification
+matching real throws first (in progress); (2) separately, build a real
+angle-to-servo-degrees mapping from hand-paired (IMU reading, verified
+correct robot-arm position) throws, same ground-truth methodology as
+`calibration_data_270.json` - the diagnostic angle currently printed is
+a comparison feature only, not yet a servo mapping. Not wired to
+`punch_classifier.py` or `track_interpolation_270.py` yet.
+
 ## Running it
 
 ```
