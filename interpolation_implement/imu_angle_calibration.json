@@ -1,0 +1,17 @@
+{
+  "_NOTE": "Ground-truth anchors mapping the wrist IMU's angleDeg (see imu_punch_classify_test.ino - 0 means the punch's own acceleration pointed roughly UP the body, ~90+ means roughly ACROSS it) onto positions_270.POSITIONS keys, so imu_angle_map.py can interpolate a live angleDeg reading into a real (pan,tilt,yaw,elbow) target. Same ground-truth methodology as calibration_data_270.json, just keyed by a measured angle instead of a MediaPipe raw reading - angle_deg values here are not re-derived anywhere else, and position keys are resolved through positions_270.POSITIONS at runtime rather than duplicating pan/tilt/yaw/elbow numbers in this file.",
+  "angle_anchors": {
+    "UPPERCUT": {
+      "angle_deg": 41.7,
+      "note": "Median of 9 real uppercut throws from imu_results_2026-10-29.md (sorted: 6.1, 25.7, 26.2, 35.9, 41.7, 42.5, 46.5, 49.9, 59.1). Wide spread - this is a center estimate from a mixed real session, not a tight cluster from a dedicated single-type batch."
+    },
+    "HOOK": {
+      "angle_deg": 73.6,
+      "note": "Median of 8 real hook throws from imu_results_2026-10-29.md (sorted: 63.2, 68.6, 69.7, 70.3, 76.9, 79.7, 82.6, 100.7)."
+    }
+  },
+  "_not_yet_added": {
+    "OVERHAND": "No real throws of this type have been logged with the IMU running yet - positions_270.POSITIONS' own tilt spectrum (UPPERCUT=220, HOOK=120, OVERHAND=90, HIGH_OVERHAND=65) hints OVERHAND might sit past HOOK's angle_deg, but that's a guess from a different channel (tilt), not a measured angleDeg - don't add it without a real labeled-throw batch.",
+    "HIGH_OVERHAND": "Same caveat as OVERHAND above - not measured yet."
+  }
+}

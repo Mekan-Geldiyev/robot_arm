@@ -5,6 +5,10 @@ Pose, and a servo arm mirrors it in real time. Built as a demo for a YC
 application / robotics portfolio - it needs to look controlled on camera, not
 janky, so tracking-quality bugs are treated as first-order problems.
 
+**Mission**: the long-term goal is a humanoid fighting robot that mirrors the
+user's full-body movement, punches included, in real time. The current
+single-arm boxing rig is a step toward that, not the end state.
+
 ## Hardware
 
 Elegoo Uno R3 + PCA9685 (I2C PWM driver) + 4x MG996R servos, arm structure
@@ -247,10 +251,11 @@ the SAME Uno as the PCA9685 (shares A4/SDA, A5/SCL - two different I2C
 addresses, 0x68 vs 0x40, coexist fine on one bus). This is not a second
 Arduino; the plan is to eventually fold its setup()/loop() into
 `robot_arm_270.ino`'s own setup()/loop() once it's proven out standalone.
-**Why this exists**: the camera/MediaPipe pipeline is too slow/laggy to
-catch a fast punch in time - the IMU is meant to be a faster trigger, not
-just a more decisive one (an open question, not yet confirmed either way
-- current priority is getting type classification right first, see below).
+**Why this exists**: the overall project mission (see top of this file) is
+full-body mirroring including punches - the camera/MediaPipe pipeline is
+too slow/laggy to catch a fast punch specifically (not body movement
+generally), so the wrist IMU exists as a faster trigger for that one
+input class, not just a more decisive one.
 
 Files, same "keep the simpler known-good file standing" pattern as
 `hook_animation_test.py`/`punch_angle_test.py`:
@@ -262,7 +267,7 @@ Files, same "keep the simpler known-good file standing" pattern as
   at ~-1g, not ~0. Didn't block spike detection (real punches are huge
   relative to either baseline) but don't trust "still reads 0" in this
   file literally.
-- `imu_punch_classify_test.ino` - current/active file. Adds hook vs
+- `imu_punch_classify_test.ino` - confirmed-good fallback. Adds hook vs
   uppercut vs low-rotation "punch" (straight) classification plus a
   diagnostic swing angle, fixes the baseline bug above (uses the
   calibration vector's measured length, `restMag`, instead of a
@@ -270,7 +275,14 @@ Files, same "keep the simpler known-good file standing" pattern as
   <verticality>,<peak_gyro_dps>` per punch - CSV, matching this repo's
   existing serial-protocol convention. Type vocabulary ("hook"/
   "uppercut"/"punch") deliberately matches `punch_classifier.py`'s own
-  strings for an eventual merge.
+  strings for an eventual merge. Left untouched since - type
+  classification confirmed working, see below.
+- `imu_punch_signed_angle_test.ino` - current/active file (2026-10-30). A
+  full copy of the above plus a second reference axis (`refForward`) and a
+  signed, continuous `signedAngleDeg`, replacing the old unsigned
+  `angleDeg`'s single-axis "how far from up" with a full plane angle
+  (uppercut ~= -90, hook ~= 0). See "Reframed goal" below for the full
+  reasoning - not yet hardware-tested.
 
 **Classifier model**: calibration (holding the wrist still) captures the
 raw accel vector as `refUp` - a unit vector meaning "which way is up, in
@@ -312,26 +324,97 @@ IMU is too sensitive to roll, where the camera is blind to it). Confirmed
 via photo that the physical mounting itself (GY-521 rigidly taped to the
 dorsal side of the wrist brace) is fine - purely an algorithm problem.
 
-**Fix**: `refUp` is now continuously adaptive, not a one-shot startup
-calibration - while idle (never during a capture window), it slowly
-drifts toward the current accel reading each loop tick
-(`REFUP_ADAPT_RATE`), so each punch is judged against whatever
+**Fix, confirmed working**: `refUp` is now continuously adaptive, not a
+one-shot startup calibration - while idle (never during a capture
+window), it slowly drifts toward the current accel reading each loop
+tick (`REFUP_ADAPT_RATE`), so each punch is judged against whatever
 orientation the wrist is actually resting in right before THAT throw.
 Classification also switched from gyro-verticality to `angleDeg` (accel-
 direction vs refUp) after the verticality approach failed twice: a hook's
 net strike acceleration should point roughly across the body
-(`ANGLE_HOOK_MIN_DEG`, currently 60), an uppercut's roughly up it. Not
-yet retested - next step is repeating the user's own palm-up/palm-down
-A/B test and checking the now-printed live `refUp` values actually
-tracked the change.
+(`ANGLE_HOOK_MIN_DEG`, currently 60), an uppercut's roughly up it. Retested
+with a real mixed batch of throws (committed verbatim as
+`imu_results_2026-10-29.md`) - real separation shows up (uppercuts mostly
+6-59 degrees, hooks mostly 63-101, one near-boundary case at 49.9) and the
+user confirmed it "identifies the punch properly" now. Phase 1 (below) is
+done; current work is phase 2.
 
-**Two-phase plan**: (1) get hook/uppercut/punch type classification
-matching real throws first (in progress); (2) separately, build a real
-angle-to-servo-degrees mapping from hand-paired (IMU reading, verified
-correct robot-arm position) throws, same ground-truth methodology as
-`calibration_data_270.json` - the diagnostic angle currently printed is
-a comparison feature only, not yet a servo mapping. Not wired to
-`punch_classifier.py` or `track_interpolation_270.py` yet.
+**Continuous SIGNED angle, attempted 2026-10-30, SHELVED after extensive
+real-hardware testing - not a tuning gap, a likely real information
+limit.** The goal was a single continuous signed number describing where
+a punch falls on a spectrum (uppercut ~= -90 degrees, hook ~= 0 degrees,
+diagonals in between/beyond), to drive the real arm's tilt/pan
+continuously instead of snapping to discrete canned positions - see
+`imu_punch_signed_angle_test/imu_punch_signed_angle_test.ino` for the
+full implementation history (kept in the repo; NOT deleted, since the
+dead ends themselves are worth not re-discovering). Four different
+feature-engineering attempts were tried across this session, each on
+real ordered-throw batches:
+
+1. Gyro-verticality (two variants, impact-instant and swing-peak-instant)
+   - both FAILED even earlier (2026-10-29), documented above.
+2. Peak-instant accel-direction vs a second axis (`refForward`, seeded
+   from a raw chip axis, Gram-Schmidt'd against `refUp`) - tried all 3
+   seed axes in parallel on one real 30-throw batch. X showed the
+   cleanest separation on a simple hook-vs-uppercut split, but a
+   written-down-order retest showed it only reads correctly for an
+   unusually "super straight" hook - less exaggerated hooks (the user's
+   own words) and ALL 10 intended "45-degree diagonal" throws collapsed
+   into the uppercut range instead of landing in between.
+3. Window-averaged accel-direction (averaging over the whole capture
+   window instead of just the peak sample, same reasoning as
+   `calibrate()`'s own averaging) - some throws improved, but several
+   throws the OLD, already-trusted `angleDeg` classifier confidently
+   calls clean uppercuts read in the HOOK range on the new signal -
+   disagreeing with a signal already known to be right, not just noisy.
+4. A real confound was found and fixed mid-session (false triggers): fast
+   non-punch arm movement was crossing the original `PUNCH_THRESHOLD_G`
+   (1.5g) and contaminating every batch with non-punch data - confirmed
+   via a controlled 3-hooks-vs-3-non-punch-movements test (clean gap:
+   hooks 4.31-5.39g, movement 2.25-2.81g). Fixed properly by splitting
+   into `PUNCH_THRESHOLD_G` (low, governs capture window open/close so it
+   stays long enough to average over) and `PUNCH_ACCEPT_G` (high, a
+   post-hoc accept/reject gate on the window's peak strength) rather than
+   just raising one threshold (which was tried first and broke the window
+   length instead). Even with trigger contamination eliminated and a
+   properly-long averaging window restored, a final clean 5-hook/5-uppercut
+   test still showed 4 of 5 real hooks reading as uppercut.
+
+**Why this is believed to be a real ceiling, not unfinished tuning**: the
+SAME failure shape - hooks collapsing toward the uppercut reading unless
+thrown in an exaggerated, atypical way - persisted across gyro-based AND
+accel-based signals, peak-instant AND window-averaged sampling, and after
+eliminating a confirmed real confound (false triggers). Four
+substantively different signal-processing approaches converging on the
+same failure mode is a pattern, not a coincidence - directly parallel to
+this project's own camera-side precedent (vision-only punch TYPE
+classification already hit a confirmed real information limit - see
+`punch_dataset.py`'s findings). **How to apply**: a future session should
+NOT re-attempt "just try a different axis/window/threshold" on this same
+peak-or-averaged-single-IMU-accel-direction approach without new
+real-world reasoning for why it would behave differently this time - the
+four attempts above already cover that space. A genuinely different
+signal source (e.g. a second IMU or magnetometer for a true body
+reference, or full gyro-integration orientation tracking rather than
+accel-snapshot direction) would be a real next idea, not a variant of
+what's already been tried.
+
+**What remains confirmed-good and unaffected by the above**: binary hook/
+uppercut/punch(straight) type classification via the OLD, UNCHANGED
+`angleDeg` in `imu_punch_classify_test.ino` - that's a separate, simpler
+signal (single-axis unsigned angle vs `refUp` only) that was confirmed
+working on real throws back on 2026-10-29 and was never the thing that
+broke. If this project returns to the wrist IMU, binary type
+classification is the piece worth building on; the continuous signed
+angle is the piece to leave alone unless a new signal source is in play.
+
+Phase B (`interpolation_implement/imu_angle_calibration.json`,
+`interpolation_approach/imu_angle_map.py`,
+`interpolation_approach/imu_angle_test.py`) and Phase C (live wiring into
+`robot_arm_270.ino`/`track_interpolation_270.py`) were never started -
+left in the repo as scaffolding from the original 3-phase plan, built on
+the now-abandoned signed-angle approach, not deleted but not functional
+toward any current goal either.
 
 ## Running it
 
