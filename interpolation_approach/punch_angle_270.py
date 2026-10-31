@@ -80,16 +80,29 @@ STRIKE_END_YAW = 30  # same as hook_animation_270.py - see that file's SAFETY no
 # as a blanket constant the first time visibly changed Hook, which was
 # wrong) - every key other than "1" gets 0 here, meaning
 # punch_animation_frame()'s pan output for them is just tgt_pan, identical
-# to before this existed. Negative this time (flipped from the first
-# attempt's +20) and bigger (30, not 20) - still an untested guess, confirm
+# to before this existed. -30 -> -40 -> -60 (more follow-through each
+# round, on request) - UPPERCUT's base pan is 169 (positions_270.POSITIONS),
+# so -60 lands at 109, still well inside the 0-SERVO_ANGLE_MAX clamp - confirm
 # in THIS file's keyboard test before it goes anywhere near live again.
 PAN_SWING_BY_KEY = {
-    "1": -30,  # Uppercut only
+    "1": -60,  # Uppercut only
 }
 
 STRIKE_SPEED_DEG_PER_SEC = 450 * 1.25  # 1.25x per request - bigger swing needs to still feel snappy, not slower
 MIN_STRIKE_DURATION_MS = 80
 HOLD_DURATION_MS = 120
+
+# Per-punch override for HOLD_DURATION_MS - UPPERCUT ONLY, same pattern as
+# PAN_SWING_BY_KEY. Longer hold = the strike lands and stays extended a
+# beat longer before the animation ends, i.e. a follow-through instead of
+# snapping back immediately. Every key other than "1" falls back to
+# HOLD_DURATION_MS via .get(key, HOLD_DURATION_MS) - untested guess,
+# confirm in THIS file's keyboard test before it goes anywhere near live
+# again.
+HOLD_DURATION_BY_KEY = {
+    "1": 220,  # Uppercut only
+}
+
 SEND_INTERVAL_MS = 20
 READY_SETTLE_SEC = 0.6  # keyboard test only - time given to reach ready before striking
 
@@ -129,7 +142,7 @@ def go_ready(ser, pan, tilt, yaw, elbow):
     time.sleep(READY_SETTLE_SEC)
 
 
-def throw(ser, pan, tilt, elbow, start_yaw, pan_swing_deg=0.0):
+def throw(ser, pan, tilt, elbow, start_yaw, pan_swing_deg=0.0, hold_duration_ms=HOLD_DURATION_MS):
     """Blocking, keyboard-test only - same proven curve as
     hook_animation_270.py's play_hook_animation, PLUS an optional pan
     swing (see PAN_SWING_BY_KEY - 0 for every punch except Uppercut) - this
@@ -150,14 +163,15 @@ def throw(ser, pan, tilt, elbow, start_yaw, pan_swing_deg=0.0):
             yaw = start_yaw + (STRIKE_END_YAW - start_yaw) * t
             swung_pan = pan + pan_swing_deg * t
             send(ser, round(swung_pan), round(tilt), round(yaw), round(elbow))
-        elif elapsed_ms < strike_duration_ms + HOLD_DURATION_MS:
+        elif elapsed_ms < strike_duration_ms + hold_duration_ms:
             send(ser, round(pan + pan_swing_deg), round(tilt), STRIKE_END_YAW, round(elbow))
         else:
             break
         time.sleep(SEND_INTERVAL_MS / 1000.0)
 
 
-def punch_animation_frame(elapsed_ms, start_pos, target_pos, target_yaw=None, pan_swing_deg=0.0):
+def punch_animation_frame(elapsed_ms, start_pos, target_pos, target_yaw=None, pan_swing_deg=0.0,
+                           hold_duration_ms=HOLD_DURATION_MS):
     """Pure/stateless, for a FUTURE live per-frame integration (not yet
     wired in - see the project's workflow rule: changes to this animation
     get tested here, in this file's keyboard test, BEFORE ever touching
@@ -170,7 +184,9 @@ def punch_animation_frame(elapsed_ms, start_pos, target_pos, target_yaw=None, pa
          target_pos's values; pan holds UNLESS pan_swing_deg is non-zero
          (see PAN_SWING_BY_KEY - 0 for every punch except Uppercut),  in
          which case it eases by that many degrees on the same curve/timing
-         as the yaw strike.
+         as the yaw strike. hold_duration_ms (see HOLD_DURATION_BY_KEY -
+         same Uppercut-only pattern) controls how long the struck pose is
+         held before the animation reports finished.
     Returns (pan, tilt, yaw, elbow, finished)."""
     start_pan, start_tilt, start_yaw, start_elbow = start_pos
     tgt_pan, tgt_tilt, tgt_yaw, tgt_elbow = target_pos
@@ -205,7 +221,7 @@ def punch_animation_frame(elapsed_ms, start_pos, target_pos, target_yaw=None, pa
 
     struck_pan = tgt_pan + pan_swing_deg
     hold_elapsed_ms = strike_elapsed_ms - strike_duration_ms
-    if hold_elapsed_ms < HOLD_DURATION_MS:
+    if hold_elapsed_ms < hold_duration_ms:
         return struck_pan, tgt_tilt, target_yaw, tgt_elbow, False
 
     return struck_pan, tgt_tilt, target_yaw, tgt_elbow, True
@@ -232,13 +248,14 @@ def main():
         elif cmd in PUNCHES:
             label, (pan, tilt, _ready_yaw, elbow) = PUNCHES[cmd]
             pan_swing_deg = PAN_SWING_BY_KEY.get(cmd, 0.0)
+            hold_duration_ms = HOLD_DURATION_BY_KEY.get(cmd, HOLD_DURATION_MS)
             # Reposition to this punch's own pan/tilt/elbow, but hold yaw
             # at the wide STRIKE_START_YAW instead of the punch's own
             # narrow ready yaw - see that constant's comment for why.
             swing_note = f", pan swings {pan_swing_deg:+.0f}" if pan_swing_deg else ""
-            print(f"Throwing {label} (pan={pan} tilt={tilt} yaw={STRIKE_START_YAW}->{STRIKE_END_YAW} elbow={elbow}{swing_note})...")
+            print(f"Throwing {label} (pan={pan} tilt={tilt} yaw={STRIKE_START_YAW}->{STRIKE_END_YAW} elbow={elbow}{swing_note}, hold={hold_duration_ms}ms)...")
             go_ready(ser, pan, tilt, STRIKE_START_YAW, elbow)
-            throw(ser, pan, tilt, elbow, STRIKE_START_YAW, pan_swing_deg=pan_swing_deg)
+            throw(ser, pan, tilt, elbow, STRIKE_START_YAW, pan_swing_deg=pan_swing_deg, hold_duration_ms=hold_duration_ms)
         else:
             print("Unknown command - use 1/2/3/4/r/q")
 

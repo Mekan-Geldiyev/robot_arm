@@ -56,6 +56,7 @@ if _PARENT_DIR not in sys.path:
 import track  # noqa: E402  (import after sys.path setup, intentional)
 import punch_angle_270  # noqa: E402
 import voice_punch_270  # noqa: E402
+import imu_punch_listener  # noqa: E402
 from punch_classifier import PunchClassifier, LABEL_COLORS  # noqa: E402
 
 # ==================== TUNABLE SETTINGS ====================
@@ -69,14 +70,11 @@ from punch_classifier import PunchClassifier, LABEL_COLORS  # noqa: E402
 # other now that both live in this one repo.
 CALIBRATION_DATA_PATH = os.path.join(_PARENT_DIR, "interpolation_implement", "calibration_data_270.json")
 
-# Flip to False to go back to pure live mirroring only, nothing ever
-# overrides pan/tilt/yaw/elbow away from what the camera sees. Single
-# switch: when False, punch_classifier.update() never even gets called
-# below, so neither automatic nor voice-cued punches can fire -
-# everything downstream of that (punch_anim_start_time, the
-# punch_animating block) just never triggers, no other code needs
-# touching to turn this back off.
-PUNCH_DETECTION_ENABLED = True
+# Whether punch detection/recognition is active, which detector (wrist
+# IMU vs vision) gets to trigger it, and whether live mirroring runs at
+# all are now asked at startup (see prompt_startup_config()) instead of
+# being fixed constants here - lets one script cover pure mirroring, pure
+# punch-reaction, or both, without a code edit each session.
 
 # Overrides track.TILT_BETA (0.03) for this build only - NOT changed in
 # track.py itself, since that file is shared with the 180-degree build and
@@ -184,12 +182,25 @@ SNAP_MARGIN = 0.1
 
 # How long the same point must stay the confident (SNAP_DISTANCE +
 # SNAP_MARGIN) nearest match before actually locking to it - see the hold-
-# time comment in InterpolationMapper.interpolate(). Matches the "hold a
-# pose for ~2 seconds" feel asked for after live testing - lower it if
-# locking feels sluggish, but raising SNAP_DISTANCE/SNAP_MARGIN instead is
+# time comment in InterpolationMapper.interpolate(). Lowered from 2.0
+# (2026-10-31) - felt too sluggish holding HAND_DOWN in real testing
+# (nowhere near locked in after several seconds of holding the pose
+# still). 0.3 is still well above a single frame (ordinary jitter can't
+# accidentally satisfy it) but far more responsive - lower it if locking
+# feels sluggish, but raising SNAP_DISTANCE/SNAP_MARGIN instead is
 # probably the wrong fix for flicker now that this exists (that's the
 # mistake this is specifically replacing).
-HOLD_TIME_SEC = 2.0
+#
+# If a pose STILL never locks in even after this change, that's a
+# different problem this constant can't fix - it means that pose is never
+# becoming the confident nearest match in the first place (a distance/
+# calibration-data issue, not a hold-time one). HAND_DOWN specifically has
+# a known note in calibration_data_270.json: its raw elbow reading (115)
+# doesn't match what a fully-straight hanging arm should read, a
+# MediaPipe z-depth limitation, not something hold-time tuning can fix -
+# watch the per-frame "-> {name}" console output while holding the pose
+# to tell which situation this actually is.
+HOLD_TIME_SEC = 0.3
 
 # ============================================================
 
@@ -401,15 +412,82 @@ def apply_safety_limits(servo_vec):
     )
 
 
+def prompt_startup_config():
+    """Asks a few questions at launch instead of requiring code edits each
+    session (the old PUNCH_DETECTION_ENABLED constant, or physically
+    disconnecting the IMU, to change behavior) - lets the same script run
+    as pure mirroring, pure punch-reaction, or both, and choose which
+    detector (wrist IMU or vision) actually gets to trigger an animation."""
+    def ask_yes_no(question, default_yes=True):
+        suffix = "[Y/n]" if default_yes else "[y/N]"
+        while True:
+            answer = input(f"{question} {suffix}: ").strip().lower()
+            if answer == "":
+                return default_yes
+            if answer in ("y", "yes"):
+                return True
+            if answer in ("n", "no"):
+                return False
+            print("Please answer y or n.")
+
+    print("=== Boxing Robot Arm - Session Setup ===")
+    wearing_brace = ask_yes_no("Are you wearing the wrist brace with the MPU-6050?")
+    mirror_enabled = ask_yes_no("Enable live mirroring (arm follows your real arm)?")
+    punch_enabled = ask_yes_no("Enable punch recognition (arm plays hook/uppercut animations)?")
+
+    punch_source = None
+    if punch_enabled:
+        if wearing_brace:
+            while True:
+                answer = input("Punch recognition source - [m]pu6050 or [v]ision? ").strip().lower()
+                if answer in ("m", "mpu", "mpu6050"):
+                    punch_source = "mpu"
+                    break
+                if answer in ("v", "vision", "mediapipe"):
+                    punch_source = "vision"
+                    break
+                print("Please answer m (mpu6050) or v (vision).")
+        else:
+            print("No brace - punch recognition will use vision (MediaPipe) only.")
+            punch_source = "vision"
+
+    print(f"=== wearing_brace={wearing_brace}  mirror={mirror_enabled}  "
+          f"punch={punch_enabled}  source={punch_source} ===\n")
+    return {
+        "wearing_brace": wearing_brace,
+        "mirror_enabled": mirror_enabled,
+        "punch_enabled": punch_enabled,
+        "punch_source": punch_source,  # "mpu", "vision", or None if punch_enabled is False
+    }
+
+
 def main():
+    config = prompt_startup_config()
+
     loader = CalibrationLoader(CALIBRATION_DATA_PATH)
     mapper = InterpolationMapper(loader.positions)
 
     ser = None
     try:
         ser = serial.Serial(track.SERIAL_PORT, track.BAUD_RATE, timeout=1, write_timeout=1)
-        time.sleep(2)  # give the Arduino time to reset after the port opens
-        print(f"Connected to Arduino on {track.SERIAL_PORT}")
+        print(f"Connected to Arduino on {track.SERIAL_PORT} - waiting for it to finish booting...")
+        # robot_arm_270.ino now blocks for ~4s doing wrist-IMU calibration
+        # before it ever reaches loop() (see that file's header) - a blind
+        # sleep(2) isn't long enough anymore and commands sent too early
+        # would just be dropped before the Arduino is reading them. Wait
+        # for its own "imu calibrated" readiness line instead, bounded so
+        # this doesn't hang forever if a different/older sketch is loaded.
+        deadline = time.monotonic() + 10.0
+        ready = False
+        while time.monotonic() < deadline:
+            line = ser.readline().decode(errors="replace").strip()
+            if "imu calibrated" in line:
+                print(f"Arduino ready: {line}")
+                ready = True
+                break
+        if not ready:
+            print("WARNING: did not see 'imu calibrated' within 10s - continuing anyway "
+                  "(a different/older sketch may be loaded, or the wrist wasn't held still).")
     except serial.SerialException as e:
         print(f"WARNING: could not open {track.SERIAL_PORT} ({e})")
         print("Continuing without serial - tracking/display only.")
@@ -485,6 +563,7 @@ def main():
                                    # don't reintroduce that mistake.
     punch_anim_target_pos = None  # (pan, tilt, yaw, elbow) - the resolved punch's full position
     punch_anim_pan_swing = 0.0    # degrees - PAN_SWING_BY_KEY.get(key, 0.0), 0 for everything but Uppercut
+    punch_anim_hold_ms = punch_angle_270.HOLD_DURATION_MS  # HOLD_DURATION_BY_KEY.get(key, default), longer for Uppercut
 
     # Voice/text-cued tilt selection (voice_punch_270.py) - say/type a
     # number before throwing instead of relying on the classifier's guess.
@@ -494,6 +573,20 @@ def main():
     # a stale logged tilt.
     voice_listener = voice_punch_270.create_listener()  # voice_punch_270.INPUT_MODE picks voice vs. typed
     voice_listener.start()
+
+    # Wrist IMU punch trigger (imu_punch_listener.py) - reads off the SAME
+    # serial connection as the servo commands above (the IMU logic now
+    # lives inside robot_arm_270.ino itself, not a second Arduino). Unlike
+    # voice, this can fire a punch animation ON ITS OWN, without waiting
+    # for the vision gate - see the trigger-priority block below and that
+    # module's own docstring for why (speed is the entire point of this
+    # sensor).
+    imu_listener = (
+        imu_punch_listener.IMUPunchListener(ser)
+        if (ser and config["wearing_brace"]) else None
+    )
+    if imu_listener:
+        imu_listener.start()
 
     punch_flash_label = ""
     punch_flash_until = 0.0
@@ -582,16 +675,47 @@ def main():
         # Keep feeding the classifier real samples even while an animation
         # is playing (the camera's still watching your real arm) - just
         # don't let a detection START a second animation on top of one
-        # already running. See PUNCH_DETECTION_ENABLED above - pure
-        # mirroring mode skips this call entirely.
+        # already running. Both detectors keep running/updating their own
+        # internal state regardless of config["punch_source"] (preserves
+        # cooldown/history continuity either way) - only ACTING on one of
+        # them is what config["punch_source"] actually gates, below.
         punch_result = (
             punch_classifier.update(shoulder, wrist, other_shoulder, raw_yaw, raw_elbow, frame_time)
-            if PUNCH_DETECTION_ENABLED else None
+            if config["punch_enabled"] else None
+        )
+        imu_punch_cmd = (
+            imu_listener.pop_next_punch()
+            if (imu_listener and config["punch_enabled"]) else None
         )
         start_punch_this_frame = False
         punch_target_pos = None  # (pan, tilt, yaw, elbow) resolved below if a punch fires this frame
         punch_target_pan_swing = 0.0
-        if punch_result:
+        punch_target_hold_ms = punch_angle_270.HOLD_DURATION_MS
+
+        if config["punch_source"] == "mpu" and imu_punch_cmd and punch_anim_start_time is None:
+            # Wrist IMU fired - takes priority over vision/voice and can
+            # start an animation ON ITS OWN, without waiting for
+            # punch_classifier's speed/travel gate to also agree. This is
+            # the entire point of the IMU chapter: it reacts in the same
+            # ~20ms tick it senses the spike, well before the vision gate
+            # even has enough frames to fire (see imu_punch_listener.py's
+            # docstring). Voice/text is NOT consulted here - the IMU
+            # already tells us the type, there's nothing left for voice to
+            # resolve for this trigger source.
+            resolved_key = imu_punch_cmd["key"]
+            effective_label, resolved_target = punch_angle_270.PUNCHES[resolved_key]
+            resolved_pan_swing = punch_angle_270.PAN_SWING_BY_KEY.get(resolved_key, 0.0)
+            resolved_hold_ms = punch_angle_270.HOLD_DURATION_BY_KEY.get(resolved_key, punch_angle_270.HOLD_DURATION_MS)
+
+            punch_flash_label = f"IMU {effective_label or imu_punch_cmd['type']}".upper()
+            punch_flash_until = frame_time + 1.0
+            print(f"\n>>> {punch_flash_label} (from wrist IMU)")
+
+            start_punch_this_frame = True
+            punch_target_pos = resolved_target
+            punch_target_pan_swing = resolved_pan_swing
+            punch_target_hold_ms = resolved_hold_ms
+        elif config["punch_source"] == "vision" and punch_result:
             # A strike happened (the gate above already confirmed that) -
             # a pending voice/text tilt wins if present; otherwise fall
             # back to the classifier's own type guess. Consumed only here,
@@ -622,6 +746,7 @@ def main():
             # here) - every other key is 0, meaning pan keeps getting
             # discarded/kept live below exactly as before.
             resolved_pan_swing = punch_angle_270.PAN_SWING_BY_KEY.get(resolved_key, 0.0)
+            resolved_hold_ms = punch_angle_270.HOLD_DURATION_BY_KEY.get(resolved_key, punch_angle_270.HOLD_DURATION_MS)
 
             punch_flash_label = (effective_label or punch_result["type"]).upper()
             punch_flash_until = frame_time + 1.0
@@ -636,6 +761,7 @@ def main():
                 start_punch_this_frame = True
                 punch_target_pos = resolved_target
                 punch_target_pan_swing = resolved_pan_swing
+                punch_target_hold_ms = resolved_hold_ms
 
         smooth_pan = pan_filter(frame_time, raw_pan)
         smooth_tilt = tilt_filter(frame_time, raw_tilt)
@@ -653,6 +779,7 @@ def main():
             punch_anim_start_pos = (pan_f, tilt_f, yaw_f, elbow_f)  # real live values, not a fixed start
             punch_anim_target_pos = punch_target_pos
             punch_anim_pan_swing = punch_target_pan_swing
+            punch_anim_hold_ms = punch_target_hold_ms
             print(f">>> Playing {punch_flash_label} animation, "
                   f"{'pan swings too' if punch_anim_pan_swing else 'pan still live'}\n")
 
@@ -670,7 +797,7 @@ def main():
             elapsed_ms = (frame_time - punch_anim_start_time) * 1000.0
             anim_pan, anim_tilt, anim_yaw, anim_elbow, finished = punch_angle_270.punch_animation_frame(
                 elapsed_ms, start_pos=punch_anim_start_pos, target_pos=punch_anim_target_pos,
-                pan_swing_deg=punch_anim_pan_swing,
+                pan_swing_deg=punch_anim_pan_swing, hold_duration_ms=punch_anim_hold_ms,
             )
             used_pan = anim_pan if punch_anim_pan_swing else pan_f
             pan_f, tilt_f, yaw_f, elbow_f = apply_safety_limits((used_pan, anim_tilt, anim_yaw, anim_elbow))
@@ -678,6 +805,7 @@ def main():
                 punch_anim_start_time = None
                 punch_animating = False
                 punch_anim_pan_swing = 0.0
+                punch_anim_hold_ms = punch_angle_270.HOLD_DURATION_MS
                 # Restart the classifier's cooldown from NOW, not from the
                 # original detection instant - otherwise a real arm
                 # retraction right after the animation (which often
@@ -732,7 +860,14 @@ def main():
         send_vals = {ch: current[ch] if changed[ch] else last_sent[ch] for ch in current}
 
         time_ok = (frame_time - last_send_time) * 1000 >= track.SEND_INTERVAL_MS
-        if ser and time_ok and any(changed.values()):
+        # When mirroring is off (config["mirror_enabled"]==False), only a
+        # punch animation is allowed to move the arm - continuous live-
+        # tracking values are computed above regardless (cheap, and
+        # vision-based punch detection needs them anyway) but never SENT
+        # unless an animation is actually playing, so the arm just holds
+        # still between punches instead of also following your real arm.
+        mirror_ok = config["mirror_enabled"] or punch_animating
+        if ser and time_ok and any(changed.values()) and mirror_ok:
             line = f"{send_vals['pan']},{send_vals['tilt']},{send_vals['yaw']},{send_vals['elbow']}\n"
             try:
                 ser.write(line.encode())
@@ -783,6 +918,8 @@ def main():
             break
 
     voice_listener.stop()
+    if imu_listener:
+        imu_listener.stop()
     cap.release()
     cv2.destroyAllWindows()
     landmarker.close()

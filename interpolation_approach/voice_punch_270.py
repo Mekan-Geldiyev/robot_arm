@@ -38,6 +38,7 @@ import threading
 import time
 import winsound
 import zipfile
+from datetime import datetime
 from pathlib import Path
 
 import pyaudio
@@ -50,6 +51,16 @@ from punch_angle_270 import PUNCHES  # noqa: E402 - single source of truth for t
 
 MODEL_NAME = "vosk-model-en-us-0.22"
 BASE_DIR = Path(__file__).resolve().parent
+
+# Every non-empty final transcription gets appended here - what Vosk
+# actually heard, what number (if any) got parsed out of it, and what
+# happened as a result (armed/rejected/no-number). Added specifically to
+# turn "the voice stuff doesn't transcribe very well" from an impression
+# into something with real examples to look at - same reasoning as every
+# other "measure, don't guess" tool in this project (capture_point.py,
+# punch_dataset.py). Appends, never overwrites, so it accumulates across
+# runs - delete it manually to start fresh.
+TRANSCRIPT_LOG_PATH = BASE_DIR / "voice_transcripts.log"
 
 # Reuse the model already downloaded for BackTPal rather than pulling
 # another ~1.8GB copy. Falls back to downloading a local copy into this
@@ -81,6 +92,19 @@ PENDING_EXPIRY_SEC = 8.0
 # exists for testing without speaking out loud. Both expose the exact same
 # pending-command interface, so nothing downstream cares which is active.
 INPUT_MODE = "voice"
+
+# Windows' system default input device is NOT necessarily the mic you're
+# actually sitting in front of - found via direct device enumeration that
+# this machine's default was a separate USB audio device, not the C922
+# webcam (the same one MediaPipe is already pointed at you with), which
+# would silently explain voice "not working at all" - it was listening to
+# the wrong physical device the whole time, not failing to recognize
+# speech. Pick by name instead of trusting the system default, so this
+# can't drift again if Windows' default ever changes (e.g. plugging in
+# headphones). Substring match, case-insensitive - adjust if the actual
+# mic you want is named differently (run this file with no mic connected
+# removed/changed to see the full device list print at startup).
+PREFERRED_MIC_NAME_CONTAINS = "C922"
 
 # ============================================================
 
@@ -212,6 +236,22 @@ def _beep_error():
     winsound.Beep(300, 200)
 
 
+def _log_transcript(heard, parsed, outcome):
+    """Appends one line to TRANSCRIPT_LOG_PATH - heard is the raw Vosk
+    text, parsed is the extracted number (or None), outcome is a short
+    human-readable result ("armed: Hook (tilt=120)", "rejected: no number
+    found", "rejected: 19 not close enough to a real tilt"). A write
+    failure here should never take down voice recognition itself, so it's
+    swallowed rather than raised."""
+    try:
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        parsed_str = f"{parsed:.0f}" if parsed is not None else "none"
+        with open(TRANSCRIPT_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(f"{timestamp} | heard: {heard!r:30} | parsed: {parsed_str:>5} | {outcome}\n")
+    except OSError as e:
+        print(f"[voice] WARNING: could not write to transcript log: {e}")
+
+
 def _download_model(out_dir: Path) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
     zip_path = out_dir / f"{MODEL_NAME}.zip"
@@ -235,6 +275,22 @@ def resolve_model_path() -> Path:
     if _LOCAL_MODEL_DIR.exists():
         return _LOCAL_MODEL_DIR
     return _download_model(BASE_DIR)
+
+
+def select_input_device(audio):
+    """Returns the PyAudio device info dict to use - prefers a device
+    whose name contains PREFERRED_MIC_NAME_CONTAINS over whatever Windows
+    currently has set as the system default (see that constant's comment
+    for why). Falls back to the system default, with a clear warning, if
+    no matching device is found - e.g. the webcam got unplugged or its
+    device name changed."""
+    for i in range(audio.get_device_count()):
+        info = audio.get_device_info_by_index(i)
+        if info["maxInputChannels"] > 0 and PREFERRED_MIC_NAME_CONTAINS.lower() in info["name"].lower():
+            return info
+    print(f"[voice] WARNING: no input device matching {PREFERRED_MIC_NAME_CONTAINS!r} found - "
+          f"falling back to the system default, which may not be the right physical mic.")
+    return audio.get_default_input_device_info()
 
 
 class _PendingTiltListener:
@@ -294,14 +350,14 @@ class VoiceTiltListener(_PendingTiltListener):
         model = Model(str(model_path))
 
         audio = pyaudio.PyAudio()
-        default_input = audio.get_default_input_device_info()
-        sample_rate = int(default_input["defaultSampleRate"])
-        print(f"[voice] Using input device: {default_input['name']} @ {sample_rate}Hz")
+        device = select_input_device(audio)
+        sample_rate = int(device["defaultSampleRate"])
+        print(f"[voice] Using input device: {device['name']} (index {device['index']}) @ {sample_rate}Hz")
 
         recognizer = KaldiRecognizer(model, sample_rate)
         stream = audio.open(
             format=pyaudio.paInt16, channels=1, rate=sample_rate,
-            input=True, frames_per_buffer=8000,
+            input=True, input_device_index=device["index"], frames_per_buffer=8000,
         )
 
         tilts_str = ", ".join(f"{t:.0f}={label}" for t, (key, label) in sorted(VALID_TILTS.items()))
@@ -311,25 +367,38 @@ class VoiceTiltListener(_PendingTiltListener):
             while self._running:
                 data = stream.read(4000, exception_on_overflow=False)
                 if not recognizer.AcceptWaveform(data):
+                    # Diagnostic only - partial (in-progress) results print
+                    # live so it's visible whether Vosk is hearing ANYTHING
+                    # at all, not just whether it ever reaches a finished
+                    # "final" result. If this never shows anything while
+                    # you're talking, the problem is upstream of
+                    # recognition entirely (mic not actually capturing),
+                    # not transcription quality.
+                    partial = json.loads(recognizer.PartialResult()).get("partial", "").strip()
+                    if partial:
+                        print(f"\r[voice] (listening) {partial:<60}", end="", flush=True)
                     continue
                 text = json.loads(recognizer.Result()).get("text", "").strip()
                 if not text:
                     continue
-                print(f"[voice] heard: {text}")
+                print(f"\n[voice] heard: {text}")
 
                 value = _extract_angle(text)
                 if value is None:
+                    _log_transcript(text, None, "rejected: no number found in text")
                     _beep_error()
                     continue
                 snapped = _snap_to_valid_tilt(value)
                 if snapped is None:
                     print(f"[voice] heard {value:.0f}, not close enough to a real tilt - ignored")
+                    _log_transcript(text, value, "rejected: not close enough to a real tilt")
                     _beep_error()
                     continue
                 tilt, key, label = snapped
                 self._set_pending(tilt, key, label)
                 _beep_done()
                 print(f"[voice] next punch armed: tilt={tilt:.0f} ({label})")
+                _log_transcript(text, value, f"armed: {label} (tilt={tilt:.0f})")
         finally:
             stream.stop_stream()
             stream.close()
