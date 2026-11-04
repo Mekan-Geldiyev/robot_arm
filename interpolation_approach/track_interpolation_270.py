@@ -416,8 +416,15 @@ def prompt_startup_config():
     """Asks a few questions at launch instead of requiring code edits each
     session (the old PUNCH_DETECTION_ENABLED constant, or physically
     disconnecting the IMU, to change behavior) - lets the same script run
-    as pure mirroring, pure punch-reaction, or both, and choose which
-    detector (wrist IMU or vision) actually gets to trigger an animation."""
+    as pure mirroring, pure punch-reaction, or both. Punch TYPE routing is
+    no longer a session choice (there used to be an "mpu or vision?"
+    question here) - see the hook-vision/uppercut-IMU split in the main
+    loop below, confirmed by a real paired-agreement test across 55 real
+    throws (imu_vision_agreement_results_2026-11-03.md): vision calls
+    hooks right 87% of the time but uppercuts only 22%; the wrist IMU is
+    the mirror image, 95% on uppercuts and only 30% on hooks. Each type
+    always goes to whichever detector is actually good at it - wearing
+    the brace only controls whether the IMU half is available at all."""
     def ask_yes_no(question, default_yes=True):
         suffix = "[Y/n]" if default_yes else "[y/N]"
         while True:
@@ -435,29 +442,17 @@ def prompt_startup_config():
     mirror_enabled = ask_yes_no("Enable live mirroring (arm follows your real arm)?")
     punch_enabled = ask_yes_no("Enable punch recognition (arm plays hook/uppercut animations)?")
 
-    punch_source = None
     if punch_enabled:
         if wearing_brace:
-            while True:
-                answer = input("Punch recognition source - [m]pu6050 or [v]ision? ").strip().lower()
-                if answer in ("m", "mpu", "mpu6050"):
-                    punch_source = "mpu"
-                    break
-                if answer in ("v", "vision", "mediapipe"):
-                    punch_source = "vision"
-                    break
-                print("Please answer m (mpu6050) or v (vision).")
+            print("Punch routing: HOOK from vision, UPPERCUT from the wrist IMU.")
         else:
-            print("No brace - punch recognition will use vision (MediaPipe) only.")
-            punch_source = "vision"
+            print("No brace - punch routing: vision only (hook AND uppercut - IMU unavailable).")
 
-    print(f"=== wearing_brace={wearing_brace}  mirror={mirror_enabled}  "
-          f"punch={punch_enabled}  source={punch_source} ===\n")
+    print(f"=== wearing_brace={wearing_brace}  mirror={mirror_enabled}  punch={punch_enabled} ===\n")
     return {
         "wearing_brace": wearing_brace,
         "mirror_enabled": mirror_enabled,
         "punch_enabled": punch_enabled,
-        "punch_source": punch_source,  # "mpu", "vision", or None if punch_enabled is False
     }
 
 
@@ -676,9 +671,8 @@ def main():
         # is playing (the camera's still watching your real arm) - just
         # don't let a detection START a second animation on top of one
         # already running. Both detectors keep running/updating their own
-        # internal state regardless of config["punch_source"] (preserves
-        # cooldown/history continuity either way) - only ACTING on one of
-        # them is what config["punch_source"] actually gates, below.
+        # internal state regardless of which one actually gets to trigger
+        # below (preserves cooldown/history continuity either way).
         punch_result = (
             punch_classifier.update(shoulder, wrist, other_shoulder, raw_yaw, raw_elbow, frame_time)
             if config["punch_enabled"] else None
@@ -692,16 +686,27 @@ def main():
         punch_target_pan_swing = 0.0
         punch_target_hold_ms = punch_angle_270.HOLD_DURATION_MS
 
-        if config["punch_source"] == "mpu" and imu_punch_cmd and punch_anim_start_time is None:
-            # Wrist IMU fired - takes priority over vision/voice and can
+        # Hook-vision / uppercut-IMU split, confirmed by a real paired
+        # agreement test across 55 real throws
+        # (imu_vision_agreement_results_2026-11-03.md): vision calls
+        # hooks right 87% of the time but uppercuts only 22% (it mostly
+        # reads a real uppercut as "hook" or an unclassified "punch");
+        # the wrist IMU is the mirror image - 95% on uppercuts, only 30%
+        # on hooks. So each type is ALWAYS routed to whichever detector
+        # is actually good at it, instead of picking one source for the
+        # whole session the way this used to work. A naive "both must
+        # agree" rule was tried on the same data and scored WORSE than
+        # either signal alone - don't reintroduce that.
+        if imu_punch_cmd and imu_punch_cmd["type"] in ("uppercut", "punch") and punch_anim_start_time is None:
+            # Wrist IMU called uppercut (or the low-rotation "punch"
+            # fallback - same PUNCHES["1"] target either way, matching
+            # imu_punch_listener.TYPE_TO_KEY). Takes priority and can
             # start an animation ON ITS OWN, without waiting for
-            # punch_classifier's speed/travel gate to also agree. This is
-            # the entire point of the IMU chapter: it reacts in the same
-            # ~20ms tick it senses the spike, well before the vision gate
-            # even has enough frames to fire (see imu_punch_listener.py's
-            # docstring). Voice/text is NOT consulted here - the IMU
-            # already tells us the type, there's nothing left for voice to
-            # resolve for this trigger source.
+            # punch_classifier's speed/travel gate to also agree - the
+            # whole point of the IMU chapter (see
+            # imu_punch_listener.py's docstring). An IMU "hook" call is
+            # deliberately NOT trusted here (only 30% accuracy) - it
+            # falls through and lets vision handle that frame instead.
             resolved_key = imu_punch_cmd["key"]
             effective_label, resolved_target = punch_angle_270.PUNCHES[resolved_key]
             resolved_pan_swing = punch_angle_270.PAN_SWING_BY_KEY.get(resolved_key, 0.0)
@@ -715,30 +720,32 @@ def main():
             punch_target_pos = resolved_target
             punch_target_pan_swing = resolved_pan_swing
             punch_target_hold_ms = resolved_hold_ms
-        elif config["punch_source"] == "vision" and punch_result:
-            # A strike happened (the gate above already confirmed that) -
-            # a pending voice/text tilt wins if present; otherwise fall
-            # back to the classifier's own type guess. Consumed only here,
-            # not every frame, so an unrelated later motion can't burn a
-            # stale logged tilt (see PENDING_EXPIRY_SEC in
-            # voice_punch_270.py).
+        elif punch_result and (punch_result["type"] == "hook" or not config["wearing_brace"]):
+            # Vision fired. Trusted outright when it specifically calls
+            # "hook" (87% accuracy - what vision is actually good at).
+            # When it instead calls "uppercut"/unclassified "punch", that
+            # fallback is only trusted if there's no wrist IMU this
+            # session (no brace) - with the brace on, the IMU branch
+            # above already owns that type, and vision's 22%-accurate
+            # uppercut guess is deliberately ignored here rather than
+            # risking a wrong animation or a double-trigger race against
+            # the IMU. A pending voice/text tilt still wins over either,
+            # consumed only here (not every frame) so an unrelated later
+            # motion can't burn a stale logged tilt (see
+            # PENDING_EXPIRY_SEC in voice_punch_270.py).
             voice_tilt_cmd = voice_listener.pop_next_tilt()
             if voice_tilt_cmd:
                 resolved_key = voice_tilt_cmd["key"]
             elif punch_result["type"] == "hook":
                 resolved_key = "4"
             else:
-                # Anything that's not a hook defaults to Uppercut -
+                # No-brace fallback only (see the elif condition above) -
                 # punch_classifier.py can't tell a jab apart from an
                 # uppercut (both read as a fast, roughly-vertical motion
-                # with no strong yaw signal - this is a real geometric
-                # ambiguity, not a bug, same category as the wide-hook-vs-
-                # reach limit documented for the 180-degree build), and
-                # there's no jab animation yet. Defaulting unclassified
-                # "punch" to Uppercut too (not just the classifier's own
-                # "uppercut" guess) means every non-hook fast motion plays
-                # SOMETHING reasonable instead of nothing, until a real jab
-                # animation exists to split this properly.
+                # with no strong yaw signal - a real geometric ambiguity,
+                # same category as the wide-hook-vs-reach limit documented
+                # for the 180-degree build), and there's no jab animation
+                # yet, so anything that's not a hook defaults to Uppercut.
                 resolved_key = "1"
             effective_label, resolved_target = punch_angle_270.PUNCHES[resolved_key]
             # PAN_SWING_BY_KEY is Uppercut-only (confirmed in

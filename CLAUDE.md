@@ -216,33 +216,37 @@ prone to if a raw value gets reused for the wrong named pose - double
 check the pose NAME still matches the raw reading's actual real-world
 pose, not just that a raw value exists.
 
-`PUNCH_DETECTION_ENABLED` (top of `track_interpolation_270.py`) is
-currently `False` - pure live mirroring only, hook/voice-cued detection
-fully disabled. Flip it back to `True` to re-enable; nothing else needs
-touching. Also added a real hold-time requirement (`HOLD_TIME_SEC=2.0`)
-on top of `SNAP_DISTANCE`/`SNAP_MARGIN` - the same point now has to stay
-the confident nearest match continuously for 2 full seconds before
+Punch recognition is now a startup prompt (`prompt_startup_config()`),
+not a fixed constant - see "Wrist IMU punch detector" below for how
+hook/uppercut routing actually works now (the old `PUNCH_DETECTION_ENABLED`
+constant and the old "mpu or vision?" source choice are both GONE).
+Also added a real hold-time requirement (`HOLD_TIME_SEC`) on top of
+`SNAP_DISTANCE`/`SNAP_MARGIN` - the same point now has to stay the
+confident nearest match continuously for this long before actually
 locking, not just for one frame, which was causing flicker on jittery
-readings near the snap boundary even while holding still.
+readings near the snap boundary even while holding still. Lowered from
+2.0 to 0.3 (2026-10-31) after real testing showed `HAND_DOWN` wasn't
+locking in even after holding it for several seconds - helped "a little"
+per the user's own retest, but did NOT fully fix it, see below.
 
-**Open issue, not yet root-caused**: moving quickly from `HAND_OUT_SIDE`
-toward `HAND_DOWN` (a 77-degree tilt swing) shows a real lag - the arm
-appears to pause for 2-3 seconds partway through, then catches up to
-`HAND_DOWN` 5-6 seconds after the real motion already happened. Checked
-the IDW blend path with a straight-line simulation between the two points
-and it transitions smoothly (`HAND_OUT_SIDE` -> `HAND_LEFT_DOWN` ->
-`HAND_DOWN`, no flat spot, never gets near `SNAP_DISTANCE`) - so probably
-NOT the interpolation math itself, though real human motion isn't a
-straight line in raw-value space so this isn't fully ruled out. Best
-current guess: the raw-signal OneEuroFilter's lag on a large, fast tilt
-swing specifically (77 degrees is a lot to track smoothly) - this would
-produce exactly this symptom, the output slowly catching up to where the
-arm already was well after the real motion stopped, which looks like a
-freeze-then-jump from the outside even though nothing is literally frozen.
-Next diagnostic step, not yet done: log raw vs. smoothed tilt and the
-chosen nearest-neighbor name every frame during a real `HAND_OUT_SIDE` ->
-`HAND_DOWN` motion, to see directly which stage is actually lagging
-instead of guessing further.
+**Open issue, user-flagged PRIORITY for next session (2026-11-03)**:
+`HAND_DOWN` needs to lock in much faster than it currently does.
+Lowering `HOLD_TIME_SEC` (above) wasn't enough on its own. The deeper,
+not-yet-root-caused issue (known since the 270-degree rebuild): moving
+quickly from `HAND_OUT_SIDE` toward `HAND_DOWN` (a 77-degree tilt swing)
+shows a real lag - the arm appears to pause partway through, then
+catches up well after the real motion already happened. Checked the IDW
+blend path with a straight-line simulation between the two points and it
+transitions smoothly - probably NOT the interpolation math itself. Two
+live theories, not yet distinguished: (1) the raw-signal OneEuroFilter's
+lag on a large, fast tilt swing specifically (77 degrees is a lot to
+track smoothly), or (2) `calibration_data_270.json`'s own noted issue -
+`HAND_DOWN`'s raw elbow reading (115) doesn't match what a fully-straight
+hanging arm should read, a MediaPipe z-depth limitation that no amount of
+hold-time tuning can fix. Next diagnostic step, not yet done: log raw vs.
+smoothed tilt and the chosen nearest-neighbor name every frame during a
+real `HAND_OUT_SIDE` -> `HAND_DOWN` motion, to see directly which stage
+is actually lagging instead of guessing further.
 
 ## Wrist IMU punch detector (new chapter, started 2026-10-29)
 
@@ -407,6 +411,56 @@ working on real throws back on 2026-10-29 and was never the thing that
 broke. If this project returns to the wrist IMU, binary type
 classification is the piece worth building on; the continuous signed
 angle is the piece to leave alone unless a new signal source is in play.
+(This binary classifier is also the one merged live into
+`robot_arm_270.ino` and consumed by `interpolation_approach/
+imu_punch_listener.py` - see that file's own docstring.)
+
+**IMU-vs-vision agreement test, confirmed AND NOW LIVE (2026-11-03)**:
+built `interpolation_approach/imu_vision_agreement_test.py` to pair the
+wrist IMU's binary call against `punch_classifier.PunchClassifier`'s call
+on the SAME real throws (keyboard-labeled ground truth), neither
+classifier changed. Two sessions, 55 real throws total after stripping
+one mislabeled run (keyboard focus was on the wrong window, label never
+switched) and a ~1-minute tail of non-punch movement that vision kept
+false-triggering on after the real throws ended (raw logs and full
+breakdown: `imu_vision_agreement_results_2026-11-03.md`). Final combined
+numbers:
+
+| | IMU | vision |
+|---|---|---|
+| hooks (31 thrown) | 30% correct | 87% correct |
+| uppercuts (24 thrown) | 95% correct | 22% correct |
+
+Vision is reliably good at hooks, bad at uppercuts (mostly misreads a
+real uppercut as `hook` or unclassified `punch`) - tested BOTH light,
+no-footwork uppercuts and real hip/foot-driven ones across the two
+sessions, same result either way, so this isn't a "throw it harder" fix.
+The wrist IMU is the mirror image. A naive "both must agree" combined
+rule was tried on this data and scored WORSE than either signal alone,
+because it lets the weaker signal veto the stronger one on exactly the
+throws where they're most likely to disagree - don't reintroduce that.
+
+**Now live in `track_interpolation_270.py`**: the old "mpu or vision?"
+startup choice is GONE - both detectors run every session, and each
+punch type is routed to whichever detector is actually good at it. IMU's
+`"uppercut"`/`"punch"` calls trigger immediately on their own (the whole
+point of the IMU chapter - no waiting for vision to agree); IMU's
+`"hook"` calls are ignored, falling through to vision. Vision's `"hook"`
+calls trigger; vision's `"uppercut"`/`"punch"` calls are ignored whenever
+the brace is on (IMU owns that type) and only used as a fallback with no
+brace at all, so uppercuts still work (worse, but not zero) without the
+sensor. See the trigger-priority block in `main()`'s loop. Confirmed
+working well on real mixed hook/uppercut throws by the user, 2026-11-03.
+
+**Open issue, user-flagged PRIORITY for next session (2026-11-03)**: the
+wrist brace's wiring is still fragile - each connection from the
+breadboard to the MPU-6050 taped on the brace is currently 3 separate
+wire segments joined with electrical tape (see the "dead-flat-zero on
+every axis" wiring-fault signature documented earlier in this chapter -
+already happened once from this exact setup). Plan: extend each
+connection by one more wire and tape it down tightly, then re-test that
+the IMU still calibrates/classifies correctly afterward - a mechanical
+fix, not a code one.
 
 Phase B (`interpolation_implement/imu_angle_calibration.json`,
 `interpolation_approach/imu_angle_map.py`,
