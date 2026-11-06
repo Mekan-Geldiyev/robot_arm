@@ -202,6 +202,38 @@ SNAP_MARGIN = 0.1
 # to tell which situation this actually is.
 HOLD_TIME_SEC = 0.3
 
+# Confirmed root cause (2026-11-05) of HAND_DOWN specifically never
+# locking in no matter how low HOLD_TIME_SEC goes: its distance NEVER
+# drops below SNAP_DISTANCE in the first place (the z-depth elbow issue
+# noted above inflates it permanently), so `confident` never becomes
+# True and the HOLD_TIME_SEC timer never even starts - it just blends
+# forever, even while visibly printing as the nearest match frame after
+# frame. This is a SEPARATE, frame-count-based lock that doesn't care
+# about SNAP_DISTANCE at all: if the same point has been the single
+# nearest match for this many consecutive frames, snap to it directly -
+# "printed 3 times in a row -> just go there" was the exact ask. Still
+# gated on SNAP_MARGIN (not bypassed) so this can't fire on the
+# deliberately closely-packed HOOK_* arc points, where a stable-looking
+# nearest match can still be a genuinely ambiguous blend region by
+# design - see SNAP_MARGIN's comment.
+NEAREST_STREAK_FRAMES = 3
+
+# Visual framing guide - an outline circle + crosshair drawn at the frame
+# center every frame (even before a pose is detected), so there's
+# something to line a body part (hip is the suggested one, since that's
+# what the pan/yaw geometry is actually anchored on) up against BEFORE
+# tracking starts, instead of guessing at framing and finding out it was
+# off only after raw readings already look wrong. Purely cosmetic - never
+# read anywhere in the tracking/servo pipeline.
+HIP_GUIDE_RADIUS_PX = 50
+HIP_GUIDE_COLOR = (0, 255, 255)  # yellow (BGR) - distinct from the red/orange/green already used elsewhere
+
+# Vertical position as a fraction of frame height (0=top, 1=bottom), not
+# dead center - user's real hip sits about 2/3 of the way down the frame
+# at normal framing distance, confirmed by live test (2026-11-05), not
+# dead middle like a first guess would assume.
+HIP_GUIDE_Y_FRAC = 2 / 3
+
 # ============================================================
 
 
@@ -278,6 +310,13 @@ class InterpolationMapper:
         self._hold_name = None
         self._hold_since = None
 
+        # Which point has been the single NEAREST match (regardless of
+        # SNAP_DISTANCE) for how many consecutive frames - see
+        # NEAREST_STREAK_FRAMES above. Separate from _hold_name/_hold_since,
+        # which only start counting once SNAP_DISTANCE is already satisfied.
+        self._nearest_streak_name = None
+        self._nearest_streak_count = 0
+
         # Per-channel scale for distance normalization - without this, raw
         # Euclidean distance lets whichever channel happens to span the
         # widest range in degrees dominate "closeness" almost entirely.
@@ -327,6 +366,26 @@ class InterpolationMapper:
             margin_ok = True
         else:
             margin_ok = nearest[1][0] - nearest[0][0] >= SNAP_MARGIN
+
+        # Streak lock: track how many consecutive frames THIS point has
+        # been the single nearest match, independent of SNAP_DISTANCE -
+        # see NEAREST_STREAK_FRAMES above for why this exists (HAND_DOWN's
+        # distance can stay stuck above SNAP_DISTANCE forever even while
+        # it's consistently, unambiguously the closest thing to the live
+        # reading every single frame). Still requires margin_ok, same as
+        # the distance-based path, so this can't fire on the deliberately
+        # closely-packed HOOK_* arc points on a frame where the "nearest"
+        # pick is genuinely ambiguous rather than a real, stable match.
+        nearest_name = nearest[0][1]
+        if nearest_name == self._nearest_streak_name:
+            self._nearest_streak_count += 1
+        else:
+            self._nearest_streak_name = nearest_name
+            self._nearest_streak_count = 1
+
+        if self._nearest_streak_count >= NEAREST_STREAK_FRAMES and margin_ok:
+            dist, name, servo_vec = nearest[0]
+            return servo_vec, [(name, 1.0, dist)]
 
         confident = nearest[0][0] < SNAP_DISTANCE and margin_ok
         candidate_name = nearest[0][1] if confident else None
@@ -387,6 +446,21 @@ def apply_output_filter(filt, t, value, snapped):
         filt.t_prev = t
         return value
     return filt(t, value)
+
+
+def draw_alignment_guide(frame):
+    """Outline circle + crosshair at the frame's horizontal center, 2/3
+    of the way down (HIP_GUIDE_Y_FRAC) rather than dead middle - stand so
+    your hip sits inside it for consistent framing session to session,
+    same idea as the calibration-pose-repeatability note for the wrist
+    IMU. Recomputed from frame.shape each call rather than hardcoded
+    pixels, since track.CROP_RIGHT_FRAC can change the frame width."""
+    h, w = frame.shape[:2]
+    center = (w // 2, int(h * HIP_GUIDE_Y_FRAC))
+    cv2.circle(frame, center, HIP_GUIDE_RADIUS_PX, HIP_GUIDE_COLOR, 2)
+    tick = 10
+    cv2.line(frame, (center[0] - tick, center[1]), (center[0] + tick, center[1]), HIP_GUIDE_COLOR, 1)
+    cv2.line(frame, (center[0], center[1] - tick), (center[0], center[1] + tick), HIP_GUIDE_COLOR, 1)
 
 
 def apply_safety_limits(servo_vec):
@@ -602,6 +676,11 @@ def main():
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
         timestamp_ms = int((frame_time - start_time) * 1000)
         results = landmarker.detect_for_video(mp_image, timestamp_ms)
+        # Drawn AFTER the detector already consumed `rgb` - this is a
+        # display-only overlay and must never end up in what MediaPipe
+        # actually sees, or the guide circle itself could skew pose
+        # detection right in the one spot the user is told to stand in.
+        draw_alignment_guide(frame)
 
         if not results.pose_landmarks:
             cv2.putText(frame, "No pose detected", (10, 30),
