@@ -18,18 +18,29 @@ ARM-DRIVING MODE (2026-11-05): when enabled, mirrors ONLY punches, not
 continuous live tracking - the arm sits at positions_270.POSITIONS
 ["REST_GUARD"] and does nothing until a real punch fires, then plays
 punch_angle_270.punch_animation_frame() to the resolved target and eases
-back to rest after. Same hook-vision/uppercut-IMU trigger split already
-confirmed live in track_interpolation_270.py: IMU's uppercut/punch calls
-trigger immediately (95% accurate, the IMU chapter's whole point), IMU's
-hook calls are ignored (30% accurate), vision's event drives a HOOK-FAMILY
-animation with a CONTINUOUS tilt (not a fixed lookup) computed from the
-measured angle_deg via HOOK_FAMILY_TILT_ANCHORS - real, hand-jogged tilt
-values the user measured directly on the hardware via robot_arm_270.ino's
-serial jog commands (res/tilt_ACTUAL_angles.png). A reading outside that
-anchor range is SUPPRESSED, not clamped-and-fired - real test data showed
+back to rest after. Vision's event drives a HOOK-FAMILY animation with a
+CONTINUOUS tilt (not a fixed lookup) computed from the measured angle_deg
+via HOOK_FAMILY_TILT_ANCHORS - real, hand-jogged tilt values the user
+measured directly on the hardware via robot_arm_270.ino's serial jog
+commands (res/tilt_ACTUAL_angles.png). A reading outside that anchor
+range is SUPPRESSED, not clamped-and-fired - real test data showed
 recovery/retraction motions reading near -101 degrees, well outside the
 family's range, and firing the arm on those would look like it's reacting
 to non-punch motion.
+
+TRIGGER PRIORITY (fixed 2026-11-06, tightened same day after a second
+live test - see UPPERCUT_CONFIRM_WINDOW_SEC and
+VISION_OVERRIDE_MAX_ANGLE_DEG's comments for the full story): vision is
+the priority signal for hook, but only an override threshold's worth of
+confidently hook-shaped reading can cancel an ALREADY-PENDING IMU
+uppercut call - vision's full hook-family range still triggers normally
+on its own otherwise. IMU is the ONLY thing that can ever trigger
+uppercut; its call arms a short confirm window rather than firing
+instantly, so a genuinely misread real hook (IMU is only ~30% accurate on
+hooks) still has a brief chance to be corrected, without that same window
+letting ambiguous, diagonal-reading real uppercuts get stolen by vision
+too easily (an earlier, looser version of this fix did exactly that).
+Vision never triggers uppercut itself.
 
 WHY VISION, NOT THE WRIST IMU, SUPPLIES THE ANGLE: a prior attempt
 (imu_punch_signed_angle_test.ino, see CLAUDE.md's "Wrist IMU punch
@@ -170,6 +181,39 @@ YAW_SAFE_FLOOR_270 = 30
 # do). Same speed-constant spirit as that file's own reposition phase.
 RETURN_TO_REST_SPEED_DEG_PER_SEC = 300
 RETURN_TO_REST_MIN_DURATION_MS = 60
+
+# How long an IMU "uppercut"/"punch" call waits, unactuated, before it's
+# trusted - added 2026-11-06 after a live test showed hook/uppercut
+# confusion: IMU is only ~30% accurate on real hooks and tends to call a
+# real hook "uppercut" instead (CLAUDE.md's 2026-11-03 agreement-test
+# numbers), and IMU typically fires well before vision's own slower,
+# window-based detection catches up - so triggering on the IMU call
+# immediately gave it an unfair, uncontested head start over vision even
+# on throws that were actually hooks. This window gives vision a real
+# chance to override it (see the trigger-priority block in main() and
+# VISION_OVERRIDE_MAX_ANGLE_DEG below) before committing. Lowered from an
+# initial 0.35 after the SAME live test showed a new problem the other
+# way - real uppercuts started getting missed, vision stealing them as
+# "hook" before IMU's window elapsed. 0.15 is a tighter, still-untested
+# guess paired with the new VISION_OVERRIDE_MAX_ANGLE_DEG restriction
+# below (the real fix for that problem - this alone wouldn't have been
+# enough) - tune further after watching it live.
+UPPERCUT_CONFIRM_WINDOW_SEC = 0.15
+
+# How confidently "hook" a vision reading has to be to override an
+# ALREADY-PENDING IMU uppercut candidate specifically - added 2026-11-06.
+# angle_to_tilt()'s full HOOK_FAMILY_TILT_ANCHORS range (-90 to +45) is
+# right for vision's OWN standalone triggering (no IMU candidate
+# pending), but real test data (imu_vision_angle_results_2026-11-05.md)
+# showed genuine uppercuts - especially diagonal ones - commonly read
+# 33-48 degrees, well inside that full range, which let them wrongly
+# cancel a correct, already-pending IMU uppercut call. Real hooks in that
+# same data clustered tightly -5 to +17 degrees. 20 sits comfortably
+# above the validated hook cluster and comfortably below the diagonal-
+# uppercut cluster - only readings this confidently "hook-shaped" are
+# allowed to veto IMU; anything above it defers to the pending IMU
+# candidate instead (still logged, just not treated as an override).
+VISION_OVERRIDE_MAX_ANGLE_DEG = 20.0
 
 # ============================================================
 
@@ -385,6 +429,7 @@ def main():
     arm_anim_target_pos = None
     arm_anim_pan_swing = 0.0
     arm_anim_hold_ms = punch_angle_270.HOLD_DURATION_MS
+    imu_uppercut_pending = None  # {"t": frame_time} - an armed-but-not-yet-committed IMU uppercut call, see UPPERCUT_CONFIRM_WINDOW_SEC
     if drive_arm:
         punch_angle_270.go_ready(ser, *arm_current_pos)
         print(f"[arm] LIVE - servo commands will be sent. Starting at REST_GUARD {arm_current_pos}")
@@ -499,9 +544,19 @@ def main():
                           f"dx={result['dx']:+.2f} dy={result['dy']:+.2f} "
                           f"speed={result['speed']:.2f} travel={result['travel']:.2f}")
 
+                    # On-screen label only - "punch" (the classifier's own
+                    # unclassified fallback, neither hook nor uppercut
+                    # confidently called) always displays as "hook" instead,
+                    # per the user's request: there are only two REAL labels
+                    # on screen now (hook/uppercut), everything vision fires
+                    # that isn't an IMU-driven uppercut is shown as a hook at
+                    # whatever angle it measured. CSV logging (pending_vision
+                    # below) keeps the TRUE classifier type unchanged - still
+                    # useful for diagnosing the classifier later.
+                    display_type = "hook" if result["type"] == "punch" else result["type"]
                     active_display = {
                         "angle_deg": angle_deg,
-                        "type": result["type"],
+                        "type": display_type,
                         "detection_side": tracked_side,
                         "until": frame_time + ANGLE_DISPLAY_HOLD_SEC,
                     }
@@ -540,49 +595,86 @@ def main():
                 pending_imu = event
 
             # --- Arm-driving trigger priority -------------------------------
-            # Same split already confirmed live in track_interpolation_270.py:
-            # IMU's uppercut/punch calls trigger immediately on their own
-            # (95% accurate - the IMU chapter's whole point); IMU's hook
-            # calls are ignored (only 30% accurate). Vision's event drives
-            # the continuous hook-family tilt instead, regardless of
-            # vision's OWN (unreliable) type label - the measured angle is
-            # what actually matters here, not that label. Never interrupts
-            # an in-progress STRIKE ("punching"), but CAN interrupt an
-            # in-progress return-to-rest - same "start from wherever the
-            # arm really is" principle already enforced elsewhere in this
-            # codebase (a fixed/frozen start position was tried once on a
-            # different file and reverted - see punch_angle_270.py's
+            # FIXED 2026-11-06 after a live test confused hook/uppercut: the
+            # old rule let an IMU uppercut/punch call trigger immediately,
+            # unconditionally - but IMU is only ~30% accurate on real hooks
+            # (CLAUDE.md's 2026-11-03 agreement-test numbers) and typically
+            # fires well BEFORE vision's own slower, window-based detection
+            # catches up, so a real hook commonly got stolen by an IMU
+            # misfire before vision ever got a say. New rule: vision is TOP
+            # PRIORITY for hook - an in-range hook-family reading wins
+            # immediately and outright, no exceptions (its continuous angle
+            # is already validated clean on real throws, far more
+            # trustworthy here than vision's own discrete type label ever
+            # was). IMU is the ONLY thing that can ever trigger uppercut
+            # (vision never routes to POSITIONS["UPPERCUT"] - an
+            # out-of-range angle_to_tilt() reading is always suppressed,
+            # never redirected there) - but an IMU uppercut call no longer
+            # fires instantly either: it arms a short confirm window
+            # (UPPERCUT_CONFIRM_WINDOW_SEC) instead, giving vision a real
+            # chance to override it with a CONFIDENTLY hook-shaped reading
+            # (angle_deg <= VISION_OVERRIDE_MAX_ANGLE_DEG - tighter than
+            # the full hook-family range, see that constant's comment for
+            # why the full range is too permissive specifically for this
+            # override decision) before it's actually committed. When
+            # there's no pending IMU candidate, vision triggers on the
+            # full hook-family range as normal - this restriction only
+            # applies to overriding IMU. Never interrupts an in-progress
+            # STRIKE ("punching"), but CAN interrupt an in-progress
+            # return-to-rest - same "start from wherever the arm really
+            # is" principle already enforced elsewhere in this codebase (a
+            # fixed/frozen start position was tried once on a different
+            # file and reverted - see punch_angle_270.py's
             # STRIKE_START_YAW history note).
             if drive_arm and arm_phase != "punching":
-                new_target = None
-                new_label = None
-                new_pan_swing = 0.0
-                new_hold_ms = punch_angle_270.HOLD_DURATION_MS
-
-                if imu_fired_uppercut:
-                    new_target = POSITIONS["UPPERCUT"]
-                    new_label = "UPPERCUT (IMU)"
-                    new_pan_swing = punch_angle_270.PAN_SWING_BY_KEY.get("1", 0.0)
-                    new_hold_ms = punch_angle_270.HOLD_DURATION_BY_KEY.get("1", punch_angle_270.HOLD_DURATION_MS)
-                elif result and angle_deg is not None:
+                # Vision first - an in-range hook-family reading wins
+                # outright UNLESS an IMU uppercut is already pending and
+                # this reading isn't confidently hook-shaped enough to
+                # override it (see VISION_OVERRIDE_MAX_ANGLE_DEG) - in
+                # that ambiguous case, defer to IMU's own pending commit
+                # instead of risking a false override on a real uppercut.
+                if result and angle_deg is not None:
                     tilt = angle_to_tilt(angle_deg)
                     if tilt is not None:
-                        hook_pan, _, hook_yaw, hook_elbow = POSITIONS["HOOK"]
-                        new_target = (hook_pan, tilt, hook_yaw, hook_elbow)
-                        new_label = f"HOOK-FAMILY tilt={tilt:.0f} (vision {angle_deg:+.0f} deg)"
+                        can_trigger = (imu_uppercut_pending is None
+                                       or angle_deg <= VISION_OVERRIDE_MAX_ANGLE_DEG)
+                        if can_trigger:
+                            hook_pan, _, hook_yaw, hook_elbow = POSITIONS["HOOK"]
+                            print(f">>> [arm] HOOK-FAMILY tilt={tilt:.0f} (vision {angle_deg:+.0f} deg) "
+                                  f"- starting from {tuple(round(v) for v in arm_current_pos)}")
+                            arm_phase = "punching"
+                            arm_anim_start_time = frame_time
+                            arm_anim_start_pos = arm_current_pos
+                            arm_anim_target_pos = (hook_pan, tilt, hook_yaw, hook_elbow)
+                            arm_anim_pan_swing = 0.0
+                            arm_anim_hold_ms = punch_angle_270.HOLD_DURATION_MS
+                            imu_uppercut_pending = None
+                        else:
+                            print(f"[arm] vision angle {angle_deg:+.1f} deg too close to uppercut "
+                                  f"territory to override pending IMU call - deferring to IMU")
                     else:
                         lo_angle, hi_angle = HOOK_FAMILY_TILT_ANCHORS[-1][0], HOOK_FAMILY_TILT_ANCHORS[0][0]
                         print(f"[arm] suppressed - angle {angle_deg:+.1f} outside "
-                              f"{lo_angle:.0f} to {hi_angle:.0f} range, not treated as a punch")
+                              f"{lo_angle:.0f} to {hi_angle:.0f} range, not treated as a hook")
 
-                if new_target is not None:
-                    print(f">>> [arm] {new_label} - starting from {tuple(round(v) for v in arm_current_pos)}")
+                # IMU - arms (or refreshes) a pending uppercut candidate,
+                # but only commits it below once the confirm window has
+                # elapsed with no vision override. Skipped entirely if
+                # vision just won this exact frame (arm_phase is already
+                # "punching" by this point).
+                if arm_phase != "punching" and imu_fired_uppercut:
+                    imu_uppercut_pending = {"t": frame_time}
+
+                if (arm_phase != "punching" and imu_uppercut_pending is not None
+                        and frame_time - imu_uppercut_pending["t"] >= UPPERCUT_CONFIRM_WINDOW_SEC):
+                    print(f">>> [arm] UPPERCUT (IMU, confirmed) - starting from {tuple(round(v) for v in arm_current_pos)}")
                     arm_phase = "punching"
                     arm_anim_start_time = frame_time
                     arm_anim_start_pos = arm_current_pos
-                    arm_anim_target_pos = new_target
-                    arm_anim_pan_swing = new_pan_swing
-                    arm_anim_hold_ms = new_hold_ms
+                    arm_anim_target_pos = POSITIONS["UPPERCUT"]
+                    arm_anim_pan_swing = punch_angle_270.PAN_SWING_BY_KEY.get("1", 0.0)
+                    arm_anim_hold_ms = punch_angle_270.HOLD_DURATION_BY_KEY.get("1", punch_angle_270.HOLD_DURATION_MS)
+                    imu_uppercut_pending = None
 
             # --- Arm animation stepping (every frame, independent of
             # whether anything NEW was detected this frame) ------------------

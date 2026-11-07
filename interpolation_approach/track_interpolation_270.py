@@ -57,7 +57,9 @@ import track  # noqa: E402  (import after sys.path setup, intentional)
 import punch_angle_270  # noqa: E402
 import voice_punch_270  # noqa: E402
 import imu_punch_listener  # noqa: E402
+import imu_vision_angle_test  # noqa: E402  (reuses angle_to_tilt/HOOK_FAMILY_TILT_ANCHORS/UPPERCUT_CONFIRM_WINDOW_SEC/VISION_OVERRIDE_MAX_ANGLE_DEG - import only, its own main()/camera/serial code never runs here)
 from punch_classifier import PunchClassifier, LABEL_COLORS  # noqa: E402
+from positions_270 import POSITIONS  # noqa: E402
 
 # ==================== TUNABLE SETTINGS ====================
 
@@ -516,17 +518,35 @@ def prompt_startup_config():
     mirror_enabled = ask_yes_no("Enable live mirroring (arm follows your real arm)?")
     punch_enabled = ask_yes_no("Enable punch recognition (arm plays hook/uppercut animations)?")
 
+    # Continuous vision-angle hook reading (2026-11-06) - an alternative to
+    # the fixed PUNCHES["4"] hook target below, built/validated standalone
+    # first in imu_vision_angle_test.py (see that file's own docstring for
+    # the full history) before being offered here as a session choice,
+    # same pattern as every other feature in this file. Off by default -
+    # it's genuinely slower to trigger (the IMU side waits out
+    # UPPERCUT_CONFIRM_WINDOW_SEC before committing, instead of firing
+    # instantly) in exchange for reading the actual angle of an angled/
+    # diagonal hook instead of always snapping to the one fixed position.
+    continuous_angle = False
     if punch_enabled:
+        continuous_angle = ask_yes_no(
+            "Use continuous vision-angle hook reading instead of the fixed hook "
+            "position? (more accurate on angled/diagonal hooks, slower to trigger)",
+            default_yes=False,
+        )
         if wearing_brace:
-            print("Punch routing: HOOK from vision, UPPERCUT from the wrist IMU.")
+            mode_note = " (continuous angle)" if continuous_angle else ""
+            print(f"Punch routing: HOOK from vision{mode_note}, UPPERCUT from the wrist IMU.")
         else:
             print("No brace - punch routing: vision only (hook AND uppercut - IMU unavailable).")
 
-    print(f"=== wearing_brace={wearing_brace}  mirror={mirror_enabled}  punch={punch_enabled} ===\n")
+    print(f"=== wearing_brace={wearing_brace}  mirror={mirror_enabled}  "
+          f"punch={punch_enabled}  continuous_angle={continuous_angle} ===\n")
     return {
         "wearing_brace": wearing_brace,
         "mirror_enabled": mirror_enabled,
         "punch_enabled": punch_enabled,
+        "continuous_angle": continuous_angle,
     }
 
 
@@ -633,6 +653,11 @@ def main():
     punch_anim_target_pos = None  # (pan, tilt, yaw, elbow) - the resolved punch's full position
     punch_anim_pan_swing = 0.0    # degrees - PAN_SWING_BY_KEY.get(key, 0.0), 0 for everything but Uppercut
     punch_anim_hold_ms = punch_angle_270.HOLD_DURATION_MS  # HOLD_DURATION_BY_KEY.get(key, default), longer for Uppercut
+
+    # continuous_angle mode only - an armed-but-not-yet-committed IMU
+    # uppercut call, {"t": frame_time}; see imu_vision_angle_test.py's
+    # UPPERCUT_CONFIRM_WINDOW_SEC/VISION_OVERRIDE_MAX_ANGLE_DEG comments.
+    imu_uppercut_pending = None
 
     # Voice/text-cued tilt selection (voice_punch_270.py) - say/type a
     # number before throwing instead of relying on the classifier's guess.
@@ -765,18 +790,76 @@ def main():
         punch_target_pan_swing = 0.0
         punch_target_hold_ms = punch_angle_270.HOLD_DURATION_MS
 
-        # Hook-vision / uppercut-IMU split, confirmed by a real paired
-        # agreement test across 55 real throws
-        # (imu_vision_agreement_results_2026-11-03.md): vision calls
-        # hooks right 87% of the time but uppercuts only 22% (it mostly
-        # reads a real uppercut as "hook" or an unclassified "punch");
-        # the wrist IMU is the mirror image - 95% on uppercuts, only 30%
-        # on hooks. So each type is ALWAYS routed to whichever detector
-        # is actually good at it, instead of picking one source for the
-        # whole session the way this used to work. A naive "both must
-        # agree" rule was tried on the same data and scored WORSE than
-        # either signal alone - don't reintroduce that.
-        if imu_punch_cmd and imu_punch_cmd["type"] in ("uppercut", "punch") and punch_anim_start_time is None:
+        if config["continuous_angle"]:
+            # --- Continuous vision-angle hook reading (optional,
+            # slower-to-trigger alternative to the fixed-position split
+            # below) - same arbitration rule as imu_vision_angle_test.py,
+            # reused via that import rather than re-implemented here, so
+            # tuning one tunes both. Vision drives hook with a CONTINUOUS
+            # tilt computed from the measured angle instead of always
+            # snapping to PUNCHES["4"]'s fixed position; IMU stays the
+            # ONLY uppercut source, but its call arms a short confirm
+            # window (UPPERCUT_CONFIRM_WINDOW_SEC) instead of firing
+            # instantly, giving vision a brief chance to correct an IMU
+            # hook-misread-as-uppercut (~30% accurate there) before it
+            # commits. Only a CONFIDENTLY hook-shaped vision reading
+            # (angle_deg <= VISION_OVERRIDE_MAX_ANGLE_DEG) can actually
+            # override a pending IMU call, though - real uppercuts
+            # (especially diagonal ones) can land inside the full
+            # hook-family range too, and letting any in-range reading
+            # override was tried first and stole real uppercuts.
+            angle_deg = (
+                math.degrees(math.atan2(-punch_result["dy"], punch_result["dx"]))
+                if punch_result else None
+            )
+
+            if imu_punch_cmd and imu_punch_cmd["type"] in ("uppercut", "punch") and punch_anim_start_time is None:
+                imu_uppercut_pending = {"t": frame_time}
+
+            if punch_result and angle_deg is not None and punch_anim_start_time is None:
+                tilt = imu_vision_angle_test.angle_to_tilt(angle_deg)
+                if tilt is not None:
+                    can_trigger = (
+                        imu_uppercut_pending is None
+                        or angle_deg <= imu_vision_angle_test.VISION_OVERRIDE_MAX_ANGLE_DEG
+                    )
+                    if can_trigger:
+                        hook_pan, _, hook_yaw, hook_elbow = POSITIONS["HOOK"]
+                        punch_flash_label = "HOOK"
+                        punch_flash_until = frame_time + 1.0
+                        print(f"\n>>> HOOK (vision angle={angle_deg:+.1f} deg -> tilt={tilt:.0f})")
+
+                        start_punch_this_frame = True
+                        punch_target_pos = (hook_pan, tilt, hook_yaw, hook_elbow)
+                        punch_target_pan_swing = 0.0
+                        punch_target_hold_ms = punch_angle_270.HOLD_DURATION_MS
+                        imu_uppercut_pending = None
+
+            if (punch_anim_start_time is None and imu_uppercut_pending is not None
+                    and frame_time - imu_uppercut_pending["t"] >= imu_vision_angle_test.UPPERCUT_CONFIRM_WINDOW_SEC):
+                effective_label, resolved_target = punch_angle_270.PUNCHES["1"]
+                punch_flash_label = f"IMU {effective_label}".upper()
+                punch_flash_until = frame_time + 1.0
+                print(f"\n>>> {punch_flash_label} (confirmed)")
+
+                start_punch_this_frame = True
+                punch_target_pos = resolved_target
+                punch_target_pan_swing = punch_angle_270.PAN_SWING_BY_KEY.get("1", 0.0)
+                punch_target_hold_ms = punch_angle_270.HOLD_DURATION_BY_KEY.get("1", punch_angle_270.HOLD_DURATION_MS)
+                imu_uppercut_pending = None
+
+        # Hook-vision / uppercut-IMU split (fixed positions, default
+        # mode), confirmed by a real paired agreement test across 55 real
+        # throws (imu_vision_agreement_results_2026-11-03.md): vision
+        # calls hooks right 87% of the time but uppercuts only 22% (it
+        # mostly reads a real uppercut as "hook" or an unclassified
+        # "punch"); the wrist IMU is the mirror image - 95% on uppercuts,
+        # only 30% on hooks. So each type is ALWAYS routed to whichever
+        # detector is actually good at it, instead of picking one source
+        # for the whole session the way this used to work. A naive "both
+        # must agree" rule was tried on the same data and scored WORSE
+        # than either signal alone - don't reintroduce that.
+        elif imu_punch_cmd and imu_punch_cmd["type"] in ("uppercut", "punch") and punch_anim_start_time is None:
             # Wrist IMU called uppercut (or the low-rotation "punch"
             # fallback - same PUNCHES["1"] target either way, matching
             # imu_punch_listener.TYPE_TO_KEY). Takes priority and can
